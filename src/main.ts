@@ -2,13 +2,6 @@ import { App, Duration } from 'aws-cdk-lib';
 import { CorsaMockStack } from './CorsaMockStack';
 
 const configs: Record<string, any> = {
-  marnix: {
-    deployToEnvironment: {
-      account: '049753832279',
-      region: 'eu-central-1',
-    },
-    attachmentRetention: Duration.days(90),
-  },
   development: {
     deployToEnvironment: {
       account: '958979025885',
