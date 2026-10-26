@@ -1,0 +1,503 @@
+{
+  "manifestVersion": 3,
+  "env": {
+    "PATH": "$(npx -c \"node --print process.env.PATH\")"
+  },
+  "tasks": {
+    "build": {
+      "name": "build",
+      "description": "Full release build",
+      "steps": [
+        {
+          "spawn": "default"
+        },
+        {
+          "spawn": "pre-compile"
+        },
+        {
+          "spawn": "compile"
+        },
+        {
+          "spawn": "post-compile"
+        },
+        {
+          "spawn": "test"
+        },
+        {
+          "spawn": "package"
+        }
+      ]
+    },
+    "bump": {
+      "name": "bump",
+      "description": "Bumps version based on latest git tag and generates a changelog entry",
+      "env": {
+        "OUTFILE": "package.json",
+        "CHANGELOG": "dist/changelog.md",
+        "BUMPFILE": "dist/version.txt",
+        "RELEASETAG": "dist/releasetag.txt",
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^13"
+      },
+      "steps": [
+        {
+          "builtin": "release/resolve-latest-tag",
+          "outputEnv": "LATEST_TAG"
+        },
+        {
+          "spawn": "bump:releasable-commits",
+          "outputEnv": "RELEASABLE_COMMITS",
+          "condition": "git rev-parse --verify --quiet \"refs/tags/$LATEST_TAG\""
+        },
+        {
+          "builtin": "release/suggest-version-bump",
+          "outputEnv": "SUGGESTED_BUMP"
+        },
+        {
+          "builtin": "release/apply-version-bump"
+        }
+      ],
+      "condition": "git log --oneline -1 | grep -v \"chore(release):\" > /dev/null"
+    },
+    "bump:releasable-commits": {
+      "name": "bump:releasable-commits",
+      "description": "Print the releasable commits since the latest release",
+      "steps": [
+        {
+          "exec": "git log --oneline $LATEST_TAG..HEAD"
+        }
+      ]
+    },
+    "bundle": {
+      "name": "bundle",
+      "description": "Prepare assets",
+      "steps": [
+        {
+          "spawn": "bundle:corsa-mock/corsa-mock.lambda"
+        }
+      ]
+    },
+    "bundle:corsa-mock/corsa-mock.lambda": {
+      "name": "bundle:corsa-mock/corsa-mock.lambda",
+      "description": "Create a JavaScript bundle from src/corsa-mock/corsa-mock.lambda.ts",
+      "steps": [
+        {
+          "execArgs": [
+            "esbuild",
+            "--bundle",
+            "src/corsa-mock/corsa-mock.lambda.ts",
+            "--target=node24",
+            "--platform=node",
+            "--outfile=assets/corsa-mock/corsa-mock.lambda/index.js",
+            "--packages=bundle",
+            "--tsconfig=test/tsconfig.json",
+            "--external:@aws-sdk/*"
+          ]
+        }
+      ]
+    },
+    "bundle:corsa-mock/corsa-mock.lambda:watch": {
+      "name": "bundle:corsa-mock/corsa-mock.lambda:watch",
+      "description": "Continuously update the JavaScript bundle from src/corsa-mock/corsa-mock.lambda.ts",
+      "steps": [
+        {
+          "execArgs": [
+            "esbuild",
+            "--bundle",
+            "src/corsa-mock/corsa-mock.lambda.ts",
+            "--target=node24",
+            "--platform=node",
+            "--outfile=assets/corsa-mock/corsa-mock.lambda/index.js",
+            "--packages=bundle",
+            "--tsconfig=test/tsconfig.json",
+            "--external:@aws-sdk/*",
+            "--watch"
+          ]
+        }
+      ]
+    },
+    "cfn-lint": {
+      "name": "cfn-lint",
+      "description": "Lint synthesized CloudFormation templates",
+      "steps": [
+        {
+          "exec": "cfn-lint cdk.out/**/*.template.json -i W3005 W2001"
+        }
+      ]
+    },
+    "clobber": {
+      "name": "clobber",
+      "description": "hard resets to HEAD of origin and cleans the local repo",
+      "env": {
+        "BRANCH": "$(git branch --show-current)"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "git",
+            "checkout",
+            "-b",
+            "scratch"
+          ],
+          "name": "save current HEAD in \"scratch\" branch"
+        },
+        {
+          "exec": "git checkout \"$BRANCH\""
+        },
+        {
+          "execArgs": [
+            "git",
+            "fetch",
+            "origin"
+          ],
+          "name": "fetch latest changes from origin"
+        },
+        {
+          "exec": "git reset --hard \"origin/$BRANCH\"",
+          "name": "hard reset to origin commit"
+        },
+        {
+          "execArgs": [
+            "git",
+            "clean",
+            "-fdx"
+          ],
+          "name": "clean all untracked files"
+        },
+        {
+          "say": "ready to rock! (unpushed commits are under the \"scratch\" branch)"
+        }
+      ],
+      "condition": "git diff --exit-code > /dev/null"
+    },
+    "compile": {
+      "name": "compile",
+      "description": "Only compile"
+    },
+    "default": {
+      "name": "default",
+      "description": "Synthesize project files",
+      "steps": [
+        {
+          "execArgs": [
+            "ts-node",
+            "--project",
+            "projenrc/tsconfig.json",
+            ".projenrc.ts"
+          ]
+        }
+      ]
+    },
+    "deploy": {
+      "name": "deploy",
+      "description": "Deploys your CDK app to the AWS cloud",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "deploy"
+          ],
+          "receiveArgs": true
+        }
+      ]
+    },
+    "destroy": {
+      "name": "destroy",
+      "description": "Destroys your cdk app in the AWS cloud",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "destroy"
+          ],
+          "receiveArgs": true
+        }
+      ]
+    },
+    "diff": {
+      "name": "diff",
+      "description": "Diffs the currently deployed app against your code",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "diff"
+          ]
+        }
+      ]
+    },
+    "eject": {
+      "name": "eject",
+      "description": "Remove projen from the project",
+      "env": {
+        "PROJEN_EJECTING": "true"
+      },
+      "steps": [
+        {
+          "spawn": "default"
+        }
+      ]
+    },
+    "eslint": {
+      "name": "eslint",
+      "description": "Runs eslint against the codebase",
+      "env": {
+        "ESLINT_USE_FLAT_CONFIG": "false",
+        "NODE_NO_WARNINGS": "1"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "eslint",
+            "--ext",
+            ".ts,.tsx",
+            "--fix",
+            "--no-error-on-unmatched-pattern",
+            "$@",
+            "src",
+            "test",
+            "build-tools",
+            "projenrc",
+            ".projenrc.ts"
+          ],
+          "receiveArgs": true
+        }
+      ]
+    },
+    "install": {
+      "name": "install",
+      "description": "Install project dependencies and update lockfile (non-frozen)",
+      "steps": [
+        {
+          "exec": "npm install"
+        }
+      ]
+    },
+    "install:ci": {
+      "name": "install:ci",
+      "description": "Install project dependencies using frozen lockfile",
+      "steps": [
+        {
+          "exec": "npm ci"
+        }
+      ]
+    },
+    "package": {
+      "name": "package",
+      "description": "Creates the distribution package",
+      "steps": [
+        {
+          "execArgs": [
+            "mkdir",
+            "-p",
+            "dist/js"
+          ]
+        },
+        {
+          "execArgs": [
+            "npm",
+            "pack",
+            "--pack-destination",
+            "dist/js"
+          ]
+        }
+      ]
+    },
+    "post-compile": {
+      "name": "post-compile",
+      "description": "Runs after successful compilation",
+      "steps": [
+        {
+          "spawn": "synth:silent"
+        }
+      ]
+    },
+    "post-upgrade": {
+      "name": "post-upgrade",
+      "description": "Runs after upgrading dependencies"
+    },
+    "pre-compile": {
+      "name": "pre-compile",
+      "description": "Prepare the project for compilation"
+    },
+    "release": {
+      "name": "release",
+      "description": "Prepare a release from \"main\" branch",
+      "env": {
+        "RELEASE": "true",
+        "MAJOR": "0"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "rm",
+            "-fr",
+            "dist"
+          ]
+        },
+        {
+          "spawn": "bump"
+        },
+        {
+          "spawn": "build"
+        },
+        {
+          "spawn": "unbump"
+        },
+        {
+          "exec": "git diff --ignore-space-at-eol --exit-code"
+        }
+      ],
+      "condition": "git log --oneline -1 | grep -v \"chore(release):\" > /dev/null"
+    },
+    "synth": {
+      "name": "synth",
+      "description": "Synthesizes your cdk app into cdk.out",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "synth"
+          ]
+        }
+      ]
+    },
+    "synth:silent": {
+      "name": "synth:silent",
+      "description": "Synthesizes your cdk app into cdk.out and suppresses the template in stdout (part of \"yarn build\")",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "synth",
+            "-q"
+          ]
+        }
+      ]
+    },
+    "test": {
+      "name": "test",
+      "description": "Run tests",
+      "steps": [
+        {
+          "execArgs": [
+            "jest",
+            "--passWithNoTests",
+            "--updateSnapshot"
+          ],
+          "receiveArgs": true
+        },
+        {
+          "spawn": "eslint"
+        }
+      ]
+    },
+    "test:watch": {
+      "name": "test:watch",
+      "description": "Run jest in watch mode",
+      "steps": [
+        {
+          "execArgs": [
+            "jest",
+            "--watch"
+          ]
+        }
+      ]
+    },
+    "unbump": {
+      "name": "unbump",
+      "description": "Restores version to 0.0.0",
+      "env": {
+        "OUTFILE": "package.json",
+        "CHANGELOG": "dist/changelog.md",
+        "BUMPFILE": "dist/version.txt",
+        "RELEASETAG": "dist/releasetag.txt",
+        "RELEASE_TAG_PREFIX": "",
+        "BUMP_PACKAGE": "commit-and-tag-version@^13"
+      },
+      "steps": [
+        {
+          "builtin": "release/reset-version"
+        }
+      ]
+    },
+    "upgrade": {
+      "name": "upgrade",
+      "description": "upgrade dependencies",
+      "env": {
+        "CI": "0"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "npx",
+            "npm-check-updates@20",
+            "--upgrade",
+            "--target=minor",
+            "--peer",
+            "--no-deprecated",
+            "--dep=dev,prod,peer,optional",
+            "--filter=@gemeentenijmegen/projen-project-type,@types/jest,@types/node,esbuild,eslint-import-resolver-typescript,eslint-plugin-import,jest,projen,ts-jest,ts-node,typescript,@aws-sdk/client-s3,@gemeentenijmegen/aws-constructs"
+          ]
+        },
+        {
+          "exec": "npm install"
+        },
+        {
+          "execArgs": [
+            "npm",
+            "update",
+            "@gemeentenijmegen/projen-project-type",
+            "@stylistic/eslint-plugin",
+            "@types/jest",
+            "@types/node",
+            "@typescript-eslint/eslint-plugin",
+            "@typescript-eslint/parser",
+            "aws-cdk",
+            "commit-and-tag-version",
+            "esbuild",
+            "eslint-import-resolver-typescript",
+            "eslint-plugin-import",
+            "eslint",
+            "jest",
+            "jest-junit",
+            "projen",
+            "ts-jest",
+            "ts-node",
+            "typescript",
+            "@aws-sdk/client-s3",
+            "@gemeentenijmegen/aws-constructs",
+            "aws-cdk-lib",
+            "constructs"
+          ]
+        },
+        {
+          "exec": "npx projen"
+        },
+        {
+          "spawn": "post-upgrade"
+        }
+      ]
+    },
+    "watch": {
+      "name": "watch",
+      "description": "Watches changes in your source code and rebuilds and deploys to the current account",
+      "steps": [
+        {
+          "execArgs": [
+            "cdk",
+            "deploy",
+            "--hotswap"
+          ]
+        },
+        {
+          "execArgs": [
+            "cdk",
+            "watch"
+          ]
+        }
+      ]
+    }
+  },
+  "//": "~~ Generated by projen. To modify, edit .projenrc.ts and run \"npx projen\"."
+}
