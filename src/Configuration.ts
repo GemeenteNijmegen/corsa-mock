@@ -1,6 +1,6 @@
-import { Duration, Environment } from "aws-cdk-lib";
-import { FailureInjectionOptions } from "./CorsaMockStack";
-import { Statics } from "./Statics";
+import { Duration, Environment } from 'aws-cdk-lib';
+import { FailureInjectionOptions } from './CorsaMockStack';
+import { Statics } from './Statics';
 
 export interface Configurable {
   configuration: Configuration;
@@ -23,7 +23,7 @@ export const configs: Record<string, Configuration> = {
     },
     deployFromEnvironment: {
       account: Statics.gnBuild,
-      region: 'eu-central-1'
+      region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(90),
     failure: {
@@ -42,7 +42,7 @@ export const configs: Record<string, Configuration> = {
     },
     deployFromEnvironment: {
       account: Statics.gnBuild,
-      region: 'eu-central-1'
+      region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(30),
   },
@@ -54,7 +54,7 @@ export const configs: Record<string, Configuration> = {
     },
     deployFromEnvironment: {
       account: Statics.gnBuild,
-      region: 'eu-central-1'
+      region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(1),
   },
