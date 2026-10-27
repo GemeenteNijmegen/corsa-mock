@@ -37,7 +37,7 @@ export const configs: Record<string, Configuration> = {
   acceptance: {
     branch: 'acceptance',
     deployToEnvironment: {
-      account: '',
+      account: '145023129433',
       region: 'eu-central-1',
     },
     deployFromEnvironment: {
@@ -49,7 +49,7 @@ export const configs: Record<string, Configuration> = {
   production: {
     branch: 'production',
     deployToEnvironment: {
-      account: '',
+      account: '692859927138',
       region: 'eu-central-1',
     },
     deployFromEnvironment: {
