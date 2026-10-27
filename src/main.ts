@@ -8,6 +8,13 @@ const configs: Record<string, any> = {
       region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(90),
+    failure: {
+      percentage: 70,
+      modes: ['soap-fault', 'fo02', 'http503', 'lost-response', 'timeout'],
+      operations: [], // all
+      seed: '123',
+      timeout: Duration.seconds(59),
+    },
   },
   acceptance: {
     deployToEnvironment: {
@@ -36,6 +43,7 @@ const app = new App();
 new CorsaMockStack(app, 'corsa-mock', {
   env: config.deployToEnvironment!,
   attachmentRetention: config.attachmentRetention,
+  failure: config.failure,
 });
 
 app.synth();

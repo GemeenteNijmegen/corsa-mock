@@ -5,7 +5,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { ATTACHMENT_TAG } from './corsa-mock/config';
+import { ATTACHMENT_TAG, FailureMode } from './corsa-mock/config';
 import { CorsaMockFunction } from './corsa-mock/corsa-mock-function';
 
 export interface CorsaMockStackProps extends StackProps {
@@ -13,6 +13,42 @@ export interface CorsaMockStackProps extends StackProps {
    * How long uploaded documents (attachments) are kept in the bucket.
    */
   attachmentRetention: Duration;
+  /**
+   * Failure injection settings. Leave out to deploy without injected failures.
+   */
+  failure?: FailureInjectionOptions;
+}
+
+/**
+ * Failure injection settings, passed to the Lambda as FAILURE_* environment variables.
+ * Settings that are left out use the Lambda defaults. See README.
+ */
+export interface FailureInjectionOptions {
+  /**
+   * Share of requests that fail on purpose, 0-100. 0 turns failure injection off.
+   * @default 0
+   */
+  percentage?: number;
+  /**
+   * Failure modes to choose from.
+   * @default ['soap-fault', 'fo02', 'http503']
+   */
+  modes?: FailureMode[];
+  /**
+   * Operations that can fail, for example `creeerZaak`. Empty means all operations.
+   * @default [] (all)
+   */
+  operations?: string[];
+  /**
+   * When set, failures are deterministic instead of random.
+   * @default '' (random)
+   */
+  seed?: string;
+  /**
+   * How long the `timeout` mode waits before answering. Must stay below the Lambda timeout.
+   * @default Duration.millis(31000)
+   */
+  timeout?: Duration;
 }
 
 export class CorsaMockStack extends Stack {
@@ -41,13 +77,20 @@ export class CorsaMockStack extends Stack {
       generateSecretString: { excludePunctuation: true, passwordLength: 32 },
     });
 
+    const timeout = Duration.minutes(2); // Longer than the default FAILURE_TIMEOUT_MS of the timeout failure mode
+    const failureTimeout = props.failure?.timeout;
+    if (failureTimeout && failureTimeout.toMilliseconds() >= timeout.toMilliseconds()) {
+      throw new Error(`failure.timeout must be shorter than the Lambda timeout (${timeout.toHumanString()})`);
+    }
+
     const mock = new CorsaMockFunction(this, 'function', {
-      timeout: Duration.minutes(2), // Longer than the default FAILURE_TIMEOUT_MS of the timeout failure mode
+      timeout,
       memorySize: 512,
       logGroup: new LogGroup(this, 'logs', { retention: RetentionDays.ONE_MONTH }),
       environment: {
         MOCK_BUCKET: bucket.bucketName,
         PATH_SECRET: pathSecret.secretValue.unsafeUnwrap(),
+        ...failureEnvironment(props.failure),
       },
     });
     bucket.grantReadWrite(mock);
@@ -65,4 +108,24 @@ export class CorsaMockStack extends Stack {
       description: 'Name of the secret holding the path prefix for the corsa mock',
     });
   }
+}
+
+function failureEnvironment(failure?: FailureInjectionOptions): Record<string, string> {
+  const environment: Record<string, string> = {};
+  if (failure?.percentage !== undefined) {
+    environment.FAILURE_PERCENTAGE = String(failure.percentage);
+  }
+  if (failure?.modes !== undefined) {
+    environment.FAILURE_MODES = failure.modes.join(',');
+  }
+  if (failure?.operations !== undefined) {
+    environment.FAILURE_OPERATIONS = failure.operations.join(',');
+  }
+  if (failure?.seed !== undefined) {
+    environment.FAILURE_SEED = failure.seed;
+  }
+  if (failure?.timeout !== undefined) {
+    environment.FAILURE_TIMEOUT_MS = String(failure.timeout.toMilliseconds());
+  }
+  return environment;
 }

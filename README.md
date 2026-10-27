@@ -31,14 +31,14 @@ client ──POST──▶ Function URL ──▶ Lambda ──▶ S3 bucket (st
 
 ## Supported operations
 
-| SOAPAction (last segment)             | Endpoint                      | What the mock does                                                                                                          | Answer                               |
-| ------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `creeerZaak_Lk01`                     | `OntvangAsynchroon`           | Stores a new zaak (identificatie, omschrijving, dates, zaaktype, initiator) and assigns a `corsa_dossierid`. Fails if the zaak already exists. | `Bv03`                               |
-| `geefZaakdetails_Lv01`                | `BeantwoordVraag`             | Returns the zaak with its latest status, latest result and einddatum, plus the `corsa_dossierid` extra element. | `zakLa01` (empty answer if not found) |
-| `actualiseerZaakstatus_Lk01`          | `OntvangAsynchroon`           | Adds a status (volgnummer, omschrijving, datumStatusGezet, gezet door) to an existing zaak.                                  | `Bv03`                               |
-| `updateZaak_Lk01`                     | `OntvangAsynchroon`           | Stores a result (resultaat omschrijving, einddatum) for an existing zaak. The latest one wins.                               | `Bv03`                               |
-| `genereerDocumentIdentificatie_Di02`  | `VerwerkSynchroonVrijBericht` | Generates a new document identificatie, `DOCUMENT_ID_PREFIX` followed by a unique suffix.                                    | `genereerDocumentIdentificatie_Du02` |
-| `voegZaakdocumentToe_Lk01`            | `OntvangAsynchroon`           | Decodes the base64 `inhoud` and stores the file and its metadata with the zaak. Fails if the zaak does not exist or the document identificatie is already used. | `Bv03`                               |
+| SOAPAction (last segment)            | Endpoint                      | What the mock does                                                                                                                                              | Answer                                |
+| ------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `creeerZaak_Lk01`                    | `OntvangAsynchroon`           | Stores a new zaak (identificatie, omschrijving, dates, zaaktype, initiator) and assigns a `corsa_dossierid`. Fails if the zaak already exists.                  | `Bv03`                                |
+| `geefZaakdetails_Lv01`               | `BeantwoordVraag`             | Returns the zaak with its latest status, latest result and einddatum, plus the `corsa_dossierid` extra element.                                                 | `zakLa01` (empty answer if not found) |
+| `actualiseerZaakstatus_Lk01`         | `OntvangAsynchroon`           | Adds a status (volgnummer, omschrijving, datumStatusGezet, gezet door) to an existing zaak.                                                                     | `Bv03`                                |
+| `updateZaak_Lk01`                    | `OntvangAsynchroon`           | Stores a result (resultaat omschrijving, einddatum) for an existing zaak. The latest one wins.                                                                  | `Bv03`                                |
+| `genereerDocumentIdentificatie_Di02` | `VerwerkSynchroonVrijBericht` | Generates a new document identificatie, `DOCUMENT_ID_PREFIX` followed by a unique suffix.                                                                       | `genereerDocumentIdentificatie_Du02`  |
+| `voegZaakdocumentToe_Lk01`           | `OntvangAsynchroon`           | Decodes the base64 `inhoud` and stores the file and its metadata with the zaak. Fails if the zaak does not exist or the document identificatie is already used. | `Bv03`                                |
 
 Any other `SOAPAction` is answered with a SOAP fault (`MOCK-NIET-ONDERSTEUND`) that lists the supported actions.
 
@@ -55,7 +55,6 @@ Deployment uses projen and the AWS CDK. The target environment is chosen with th
 
 | `BRANCH_NAME` | Account        | Region       | Document retention |
 | ------------- | -------------- | ------------ | ------------------ |
-| `marnix`      | `049753832279` | eu-central-1 | 90 days            |
 | `development` | `958979025885` | eu-central-1 | 90 days            |
 | `acceptance`  | not set yet    | eu-central-1 | 30 days            |
 | `production`  | not set yet    | eu-central-1 | 1 day              |
@@ -81,44 +80,31 @@ The `corsa-mock` stack creates:
 
 It has two outputs:
 
-| Output             | Value                                       |
-| ------------------ | ------------------------------------------- |
-| `url`              | The Function URL                            |
+| Output             | Value                                         |
+| ------------------ | --------------------------------------------- |
+| `url`              | The Function URL                              |
 | `path-secret-name` | Name of the secret that holds the path prefix |
 
 ## Connecting a client
 
-The client's base URL (`ZAAKDMS_URL` for laravel-zaakdms) is the Function URL, then the path secret, then a `/`:
-
-```sh
-SECRET_NAME=$(aws cloudformation describe-stacks --stack-name corsa-mock \
-  --query "Stacks[0].Outputs[?OutputKey=='pathsecretname'].OutputValue" --output text)
-URL=$(aws cloudformation describe-stacks --stack-name corsa-mock \
-  --query "Stacks[0].Outputs[?OutputKey=='url'].OutputValue" --output text)
-SECRET=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --query SecretString --output text)
-
-echo "ZAAKDMS_URL=${URL}${SECRET}/"
-curl "${URL}${SECRET}/health"   # ok
-```
-
-The trailing `/` matters: the client adds the endpoint name directly after the base URL. Without it the mock answers with `MOCK-VERKEERD-ENDPOINT`.
+The client's base URL (`ZAAKDMS_URL` for laravel-zaakdms) is the Function URL, then the path secret, then a `/`. The trailing `/` matters: the client adds the endpoint name directly after the base URL. Without it the mock answers with `MOCK-VERKEERD-ENDPOINT`.
 
 ## Configuration
 
-The Lambda is configured with environment variables, read in [src/corsa-mock/config.ts](src/corsa-mock/config.ts). The stack sets `MOCK_BUCKET` and `PATH_SECRET`. All other variables use their defaults unless you add them to `environment` in [src/CorsaMockStack.ts](src/CorsaMockStack.ts) and deploy again, or set them on the Lambda in the AWS console (the next deploy removes those again).
+The Lambda is configured with environment variables, read in [src/corsa-mock/config.ts](src/corsa-mock/config.ts). The stack sets `MOCK_BUCKET` and `PATH_SECRET`, and the `FAILURE_*` variables from the `failure` setting in [src/main.ts](src/main.ts). All other variables use their defaults unless you add them to `environment` in [src/CorsaMockStack.ts](src/CorsaMockStack.ts) and deploy again, or set them on the Lambda in the AWS console (the next deploy removes those again).
 
-| Variable              | Default                     | Description                                                                                                                         |
-| --------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `MOCK_BUCKET`         | (required)                  | S3 bucket for all state. Set by the stack. The Lambda refuses to start without it.                                                    |
-| `MOCK_PREFIX`         | `''`                        | Key prefix inside the bucket, for example `zaakdms-mock/`.                                                                           |
-| `PATH_SECRET`         | `''`                        | Every request path must start with `/<PATH_SECRET>/`. Set by the stack from the generated secret. Empty disables the check.          |
-| `STORE_REQUESTS`      | `true`                      | Store every incoming request under `requests/`, with document content left out. Set to `false` to turn this off.                     |
-| `DOCUMENT_ID_PREFIX`  | `MOCK-DOC-`                 | Prefix of identificaties generated by `genereerDocumentIdentificatie`.                                                               |
-| `FAILURE_PERCENTAGE`  | `0`                         | Share of requests that fail on purpose, `0` to `100`. `0` turns failure injection off.                                               |
-| `FAILURE_MODES`       | `soap-fault,fo02,http503`   | Comma separated failure modes to choose from. See [Failure injection](#failure-injection).                                           |
-| `FAILURE_OPERATIONS`  | `''` (all)                  | Comma separated operation names that can fail, for example `creeerZaak,voegZaakdocumentToe`. Empty means all operations.             |
-| `FAILURE_SEED`        | `''`                        | When set, failures are deterministic instead of random. See [Deterministic failures](#deterministic-failures).                       |
-| `FAILURE_TIMEOUT_MS`  | `31000`                     | How long the `timeout` mode waits before answering. Must stay below the Lambda timeout (2 minutes).                                  |
+| Variable             | Default                   | Description                                                                                                                 |
+| -------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `MOCK_BUCKET`        | (required)                | S3 bucket for all state. Set by the stack. The Lambda refuses to start without it.                                          |
+| `MOCK_PREFIX`        | `''`                      | Key prefix inside the bucket, for example `zaakdms-mock/`.                                                                  |
+| `PATH_SECRET`        | `''`                      | Every request path must start with `/<PATH_SECRET>/`. Set by the stack from the generated secret. Empty disables the check. |
+| `STORE_REQUESTS`     | `true`                    | Store every incoming request under `requests/`, with document content left out. Set to `false` to turn this off.            |
+| `DOCUMENT_ID_PREFIX` | `MOCK-DOC-`               | Prefix of identificaties generated by `genereerDocumentIdentificatie`.                                                      |
+| `FAILURE_PERCENTAGE` | `0`                       | Share of requests that fail on purpose, `0` to `100`. `0` turns failure injection off.                                      |
+| `FAILURE_MODES`      | `soap-fault,fo02,http503` | Comma separated failure modes to choose from. See [Failure injection](#failure-injection).                                  |
+| `FAILURE_OPERATIONS` | `''` (all)                | Comma separated operation names that can fail, for example `creeerZaak,voegZaakdocumentToe`. Empty means all operations.    |
+| `FAILURE_SEED`       | `''`                      | When set, failures are deterministic instead of random. See [Deterministic failures](#deterministic-failures).              |
+| `FAILURE_TIMEOUT_MS` | `31000`                   | How long the `timeout` mode waits before answering. Must stay below the Lambda timeout (2 minutes).                         |
 
 Invalid values for `FAILURE_PERCENTAGE` or `FAILURE_MODES` make the Lambda fail on start, with an error that says what is allowed.
 
@@ -126,20 +112,31 @@ The operation names for `FAILURE_OPERATIONS` are: `geefZaakDetails`, `creeerZaak
 
 Settings in [src/main.ts](src/main.ts), per environment:
 
-| Setting               | Description                                                                  |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `deployToEnvironment` | AWS account and region to deploy to.                                         |
+| Setting               | Description                                                                    |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `deployToEnvironment` | AWS account and region to deploy to.                                           |
 | `attachmentRetention` | How long stored document files are kept in the bucket before they are removed. |
+| `failure`             | Optional failure injection settings, see below.                                |
+
+The `failure` setting maps to the `FAILURE_*` variables. Settings that are left out use the defaults from the table above.
+
+| `failure` field | Variable             | Example                                     |
+| --------------- | -------------------- | ------------------------------------------- |
+| `percentage`    | `FAILURE_PERCENTAGE` | `10`                                        |
+| `modes`         | `FAILURE_MODES`      | `['soap-fault', 'timeout']`                 |
+| `operations`    | `FAILURE_OPERATIONS` | `['creeerZaak', 'voegZaakdocumentToe']`     |
+| `seed`          | `FAILURE_SEED`       | `'run-1'`                                   |
+| `timeout`       | `FAILURE_TIMEOUT_MS` | `Duration.seconds(31)`, below the Lambda timeout |
 
 ## Failure injection
 
 With `FAILURE_PERCENTAGE` above `0`, that share of requests fails with one of the configured modes:
 
-| Mode            | Response                                                                                                                       | Is the change stored? |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| Mode            | Response                                                                                                                        | Is the change stored? |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | `soap-fault`    | HTTP 500 with a SOAP fault holding a Fo02 message (code `MOCK-INJECTED`). This is how StUF normally reports errors.             | No                    |
 | `fo02`          | HTTP 200 with a Fo02 message in the SOAP body.                                                                                  | No                    |
-| `http503`       | HTTP 503 `Service Unavailable`, plain text.                                                                                    | No                    |
+| `http503`       | HTTP 503 `Service Unavailable`, plain text.                                                                                     | No                    |
 | `timeout`       | Waits `FAILURE_TIMEOUT_MS`, then HTTP 504 `Gateway Timeout`. Use it to test client timeouts.                                    | No                    |
 | `lost-response` | The operation is carried out, but the client gets HTTP 502 `Bad Gateway`. Use it to test that retries do not create duplicates. | **Yes**               |
 
@@ -181,15 +178,15 @@ Every request is also logged to CloudWatch as one JSON line with the operation, 
 
 Functional errors are answered as HTTP 500 with a SOAP fault holding a Fo02 message:
 
-| Code                     | Cause                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| `MOCK-NIET-ONDERSTEUND`  | The `SOAPAction` is not one of the supported operations.                                 |
+| Code                     | Cause                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `MOCK-NIET-ONDERSTEUND`  | The `SOAPAction` is not one of the supported operations.                                              |
 | `MOCK-VERKEERD-ENDPOINT` | The request was sent to the wrong endpoint for this operation (often a missing `/` in `ZAAKDMS_URL`). |
-| `MOCK-ONGELDIG`          | A required element is missing or empty. `details` names the element.                     |
-| `MOCK-NIET-GEVONDEN`     | The zaak does not exist (status, update or document for an unknown zaak).                |
-| `MOCK-BESTAAT-AL`        | The zaak or document identificatie already exists.                                       |
-| `MOCK-INJECTED`          | A failure injected on purpose.                                                            |
-| `MOCK-INTERN`            | An unexpected error in the mock itself. Check the CloudWatch logs.                        |
+| `MOCK-ONGELDIG`          | A required element is missing or empty. `details` names the element.                                  |
+| `MOCK-NIET-GEVONDEN`     | The zaak does not exist (status, update or document for an unknown zaak).                             |
+| `MOCK-BESTAAT-AL`        | The zaak or document identificatie already exists.                                                    |
+| `MOCK-INJECTED`          | A failure injected on purpose.                                                                        |
+| `MOCK-INTERN`            | An unexpected error in the mock itself. Check the CloudWatch logs.                                    |
 
 ## Development
 
@@ -202,14 +199,14 @@ BRANCH_NAME=development npx projen synth   # synth only
 BRANCH_NAME=development npx projen diff    # compare with the deployed stack
 ```
 
-| File                                                                    | Contents                                                     |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [src/main.ts](src/main.ts)                                              | Environment configurations and the CDK app                   |
-| [src/CorsaMockStack.ts](src/CorsaMockStack.ts)                          | Bucket, secret, Lambda and Function URL                      |
-| [src/corsa-mock/handler.ts](src/corsa-mock/handler.ts)                  | HTTP handling, routing, failure injection and logging        |
-| [src/corsa-mock/operations.ts](src/corsa-mock/operations.ts)            | The supported operations and how they store data             |
-| [src/corsa-mock/soap.ts](src/corsa-mock/soap.ts)                        | SOAP/StUF response messages                                  |
-| [src/corsa-mock/chaos.ts](src/corsa-mock/chaos.ts)                      | Random and deterministic failure decisions                   |
-| [src/corsa-mock/config.ts](src/corsa-mock/config.ts)                    | Environment variables                                        |
-| [src/corsa-mock/store.ts](src/corsa-mock/store.ts)                      | S3 store, and an in-memory store for tests                   |
-| [src/corsa-mock/xml.ts](src/corsa-mock/xml.ts)                          | Minimal XML helpers for the messages the client sends        |
+| File                                                         | Contents                                              |
+| ------------------------------------------------------------ | ----------------------------------------------------- |
+| [src/main.ts](src/main.ts)                                   | Environment configurations and the CDK app            |
+| [src/CorsaMockStack.ts](src/CorsaMockStack.ts)               | Bucket, secret, Lambda and Function URL               |
+| [src/corsa-mock/handler.ts](src/corsa-mock/handler.ts)       | HTTP handling, routing, failure injection and logging |
+| [src/corsa-mock/operations.ts](src/corsa-mock/operations.ts) | The supported operations and how they store data      |
+| [src/corsa-mock/soap.ts](src/corsa-mock/soap.ts)             | SOAP/StUF response messages                           |
+| [src/corsa-mock/chaos.ts](src/corsa-mock/chaos.ts)           | Random and deterministic failure decisions            |
+| [src/corsa-mock/config.ts](src/corsa-mock/config.ts)         | Environment variables                                 |
+| [src/corsa-mock/store.ts](src/corsa-mock/store.ts)           | S3 store, and an in-memory store for tests            |
+| [src/corsa-mock/xml.ts](src/corsa-mock/xml.ts)               | Minimal XML helpers for the messages the client sends |

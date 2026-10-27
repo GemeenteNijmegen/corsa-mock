@@ -23,3 +23,37 @@ test('Attachments expire after the configured retention', () => {
     },
   });
 });
+
+test('Failure injection settings are passed to the Lambda', () => {
+  const app = new App();
+  const stack = new CorsaMockStack(app, 'test', {
+    attachmentRetention: Duration.days(1),
+    failure: {
+      percentage: 25,
+      modes: ['timeout', 'lost-response'],
+      operations: ['creeerZaak', 'voegZaakdocumentToe'],
+      seed: 'run-1',
+      timeout: Duration.seconds(40),
+    },
+  });
+
+  Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Function', {
+    Environment: {
+      Variables: Match.objectLike({
+        FAILURE_PERCENTAGE: '25',
+        FAILURE_MODES: 'timeout,lost-response',
+        FAILURE_OPERATIONS: 'creeerZaak,voegZaakdocumentToe',
+        FAILURE_SEED: 'run-1',
+        FAILURE_TIMEOUT_MS: '40000',
+      }),
+    },
+  });
+});
+
+test('Failure timeout must be shorter than the Lambda timeout', () => {
+  const app = new App();
+  expect(() => new CorsaMockStack(app, 'test', {
+    attachmentRetention: Duration.days(1),
+    failure: { timeout: Duration.minutes(2) },
+  })).toThrow(/shorter than the Lambda timeout/);
+});
