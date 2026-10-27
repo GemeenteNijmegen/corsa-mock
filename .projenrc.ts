@@ -2,12 +2,13 @@ import { GemeenteNijmegenCdkApp } from '@gemeentenijmegen/projen-project-type';
 import { javascript } from 'projen';
 const project = new GemeenteNijmegenCdkApp({
   cdkVersion: '2.189.1',
-  devDeps: ['@gemeentenijmegen/projen-project-type'],
   name: 'corsa-mock',
   packageManager: javascript.NodePackageManager.NPM,
   projenrcTs: true,
+  devDeps: [],
   deps: [
     '@aws-sdk/client-s3',
+    '@gemeentenijmegen/projen-project-type',
   ],
 
   // defaultReleaseBranch: "main",  /* The name of the main release branch. */

@@ -49,7 +49,7 @@ export class PipelineStack extends Stack {
       },
       commands: [
         'npm ci',
-        'npm run build',
+        'npx projen build',
       ],
     });
 
@@ -88,7 +88,7 @@ export class PipelineStack extends Stack {
    * @returns
    */
   private connectionSource(connectionArn: CfnParameter): pipelines.CodePipelineSource {
-    return pipelines.CodePipelineSource.connection('GemeenteNijmegen/mijn-nijmegen', this.branchName, {
+    return pipelines.CodePipelineSource.connection(`${Statics.org}/${Statics.repo}`, this.branchName, {
       connectionArn: connectionArn.valueAsString,
     });
   }
