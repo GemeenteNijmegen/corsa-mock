@@ -1,0 +1,107 @@
+import { PermissionsBoundaryAspect } from '@gemeentenijmegen/aws-constructs';
+import { getNodeVersion } from '@gemeentenijmegen/projen-project-type';
+import { Aspects, CfnParameter, Stack, StackProps, Stage, StageProps, Tags, pipelines } from 'aws-cdk-lib';
+import { BuildSpec, Cache, LocalCacheMode } from 'aws-cdk-lib/aws-codebuild';
+import { PipelineType } from 'aws-cdk-lib/aws-codepipeline';
+import { Construct } from 'constructs';
+import { Configurable } from './Configuration';
+import { CorsaMockStack } from './CorsaMockStack';
+import { Statics } from './Statics';
+
+export interface PipelineStackProps extends StackProps, Configurable { }
+
+/**
+ * The pipeline runs in a build environment, and is responsible for deploying
+ * Cloudformation stacks to the workload account. The pipeline will first build
+ * and synth the project, then deploy (self-mutating if necessary).
+ */
+export class PipelineStack extends Stack {
+  branchName: string;
+
+  constructor(scope: Construct, id: string, props: PipelineStackProps) {
+    super(scope, id, props);
+    Tags.of(this).add('cdkManaged', 'yes');
+    Tags.of(this).add('Project', Statics.projectName);
+    Aspects.of(this).add(new PermissionsBoundaryAspect());
+    this.branchName = props.configuration.branch;
+
+    /** On first deploy, providing a connectionArn param to `cdk deploy` is required, so the
+     * codestarconnection can be setup. This connection is responsible for further deploys
+     * triggering from a commit to the specified branch on Github.
+     */
+    const connectionArn = new CfnParameter(this, 'connectionArn');
+    const source = this.connectionSource(connectionArn);
+
+    const pipeline = this.pipeline(source, props);
+    pipeline.addStage(new SingleStackStage(this, 'corsa-mock', {
+      env: props.configuration.deployToEnvironment,
+      configuration: props.configuration,
+    }));
+
+
+  }
+
+  pipeline(source: pipelines.CodePipelineSource, props: PipelineStackProps): pipelines.CodePipeline {
+    const synthStep = new pipelines.ShellStep('Synth', {
+      input: source,
+      env: {
+        BRANCH_NAME: this.branchName,
+      },
+      commands: [
+        'npm ci',
+        'npm run build',
+      ],
+    });
+
+    const pipelineName = `corsa-mock-pipeline-${props.configuration.branch}`;
+    const pipeline = new pipelines.CodePipeline(this, pipelineName, {
+      pipelineName: pipelineName,
+      crossAccountKeys: true,
+      synth: synthStep,
+      pipelineType: PipelineType.V1,
+      synthCodeBuildDefaults: {
+        cache: Cache.local(LocalCacheMode.CUSTOM),
+        partialBuildSpec: BuildSpec.fromObject({
+          phases: {
+            install: {
+              'runtime-versions': {
+                nodejs: getNodeVersion(),
+              },
+            },
+          },
+          cache: {
+            paths: ['node_modules'],
+          },
+        }),
+      },
+    });
+    return pipeline;
+  }
+
+  /**
+   * We use a codestarconnection to trigger automatic deploys from Github
+   *
+   * The value for this ARN can be found in the CodePipeline service under [settings->connections](https://eu-central-1.console.aws.amazon.com/codesuite/settings/connections?region=eu-central-1)
+   * Usually this will be in the build-account.
+   *
+   * @param connectionArn the ARN for the codestarconnection.
+   * @returns
+   */
+  private connectionSource(connectionArn: CfnParameter): pipelines.CodePipelineSource {
+    return pipelines.CodePipelineSource.connection('GemeenteNijmegen/mijn-nijmegen', this.branchName, {
+      connectionArn: connectionArn.valueAsString,
+    });
+  }
+}
+
+interface SingleStackStageProps extends StageProps, Configurable { }
+
+class SingleStackStage extends Stage {
+  constructor(scope: Construct, id: string, props: SingleStackStageProps) {
+    super(scope, id, props);
+    new CorsaMockStack(this, 'api', {
+      attachmentRetention: props.configuration.attachmentRetention,
+      failure: props.configuration.failure,
+    })
+  }
+}
