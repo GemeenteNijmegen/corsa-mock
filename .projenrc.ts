@@ -81,16 +81,20 @@ if (checkov) {
           framework: 'cloudformation',
           soft_fail: true,
           output_format: 'cli,sarif',
-          output_file_path: 'console,checkov.sarif',
+          // The sarif output is written as results_sarif.sarif INSIDE this
+          // directory (the action treats the path as a folder, not a file).
+          // The 'console' entry pairs with the 'cli' output above.
+          output_file_path: 'console,checkov-results',
         },
       },
       {
         name: 'Upload SARIF to code scanning',
         // Run even when Checkov reports findings so results always land in the
-        // Security tab.
+        // Security tab. upload-sarif accepts a directory and ingests every
+        // .sarif inside it, so we point it at the folder Checkov wrote.
         if: 'always()',
         uses: 'github/codeql-action/upload-sarif@v3',
-        with: { sarif_file: 'checkov.sarif' },
+        with: { sarif_file: 'checkov-results' },
       },
     ],
   });
