@@ -57,15 +57,6 @@ export class CorsaMockStack extends Stack {
     Aspects.of(this).add(new PermissionsBoundaryAspect());
 
 
-    // TEST ONLY — deliberately insecure bucket to verify that Checkov results
-    // reach GitHub code scanning. It omits encryption, SSL enforcement and
-    // public-access blocking, which trips several well-known Checkov rules
-    // (e.g. CKV_AWS_19 S3 encryption). Remove once an alert shows up in the
-    // Security tab.
-    new Bucket(this, 'checkov-test-insecure', {
-      encryption: BucketEncryption.UNENCRYPTED,
-    });
-
     const bucket = new Bucket(this, 'state', {
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
