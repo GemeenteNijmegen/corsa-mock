@@ -59,6 +59,7 @@ export class MtlsApi extends Construct {
         mtls: { bucket: truststore.bucket, key: truststore.key },
       },
     });
+    api.node.tryRemoveChild('Endpoint'); // The output with the disabled execute-api URL
     // API Gateway reads the trust store when the domain is created or its URI changes.
     api.domainName!.node.addDependency(truststore.deployment);
 
@@ -76,7 +77,8 @@ export class MtlsApi extends Construct {
       encryption: BucketEncryption.S3_MANAGED,
       versioned: true,
       lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(30) }],
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.DESTROY, // The content is in this repository
+      autoDeleteObjects: true,
     });
 
     // API Gateway only reloads the trust store when its URI changes, so the key follows the content.
@@ -85,7 +87,10 @@ export class MtlsApi extends Construct {
       destinationBucket: bucket,
       sources: [Source.data(key, pem)],
       prune: false, // The domain uses the old object until it has switched to the new one
-      logGroup: new LogGroup(this, 'truststore-deployment-logs', { retention: RetentionDays.ONE_MONTH }),
+      logGroup: new LogGroup(this, 'truststore-deployment-logs', {
+        retention: RetentionDays.ONE_MONTH,
+        removalPolicy: RemovalPolicy.DESTROY,
+      }),
     });
 
     return { bucket, key, deployment };

@@ -91,3 +91,23 @@ test('An invalid trust store fails synth', () => {
   expect(() => synth(pemFile(''))).toThrow(/contains no certificate/);
   expect(() => synth(pemFile(ca + readFileSync(TEST_CLIENT, 'utf8')))).toThrow(/not a CA/);
 });
+
+test('The trust store bucket is private and only accepts TLS', () => {
+  const template = synth(TEST_CA);
+
+  template.hasResourceProperties('AWS::S3::Bucket', {
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true,
+    },
+    VersioningConfiguration: { Status: 'Enabled' },
+  });
+  template.hasResourceProperties('AWS::S3::BucketPolicy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([Match.objectLike({ Effect: 'Deny', Condition: { Bool: { 'aws:SecureTransport': 'false' } } })]),
+    },
+  });
+});
+
+test('The disabled execute-api URL is not an output', () => {
+  expect(synth(TEST_CA).findOutputs('*')).toEqual({});
+});
