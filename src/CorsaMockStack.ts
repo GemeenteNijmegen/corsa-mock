@@ -5,6 +5,7 @@ import { HostedZone } from 'aws-cdk-lib/aws-route53';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
+import { normalizeFingerprint } from './corsa-mock/clientCertificate';
 import { ATTACHMENT_TAG, FailureMode } from './corsa-mock/config';
 import { CorsaMockFunction } from './corsa-mock/corsa-mock-function';
 import { MtlsApi } from './MtlsApi';
@@ -19,6 +20,10 @@ export interface CorsaMockStackProps extends StackProps {
    * PEM file with the public certificates of the CAs that sign client certificates.
    */
   truststorePath: string;
+  /**
+   * SHA-256 fingerprints of the client certificates that are accepted. Empty means none.
+   */
+  allowedFingerprints: string[];
   /**
    * Failure injection settings. Leave out to deploy without injected failures.
    */
@@ -94,6 +99,7 @@ export class CorsaMockStack extends Stack {
       logGroup: new LogGroup(this, 'logs', { retention: RetentionDays.ONE_MONTH }),
       environment: {
         MOCK_BUCKET: bucket.bucketName,
+        ALLOWED_CERT_FINGERPRINTS: props.allowedFingerprints.map(normalizeFingerprint).join(','),
         ...failureEnvironment(props.failure),
       },
     });

@@ -6,6 +6,7 @@ import { CorsaMockStack } from '../src/CorsaMockStack';
 const DEFAULT_PROPS = {
   attachmentRetention: Duration.days(1),
   truststorePath: join(__dirname, 'fixtures/test-ca.pem'),
+  allowedFingerprints: [],
 };
 
 test('Snapshot', () => {
@@ -85,4 +86,18 @@ test('The state bucket keeps its logical id', () => {
   const template = Template.fromStack(new CorsaMockStack(new App(), 'test', DEFAULT_PROPS));
 
   expect(template.toJSON().Resources).toHaveProperty('stateEC29AD4A');
+});
+
+test('Allowed fingerprints are validated and passed to the Lambda', () => {
+  const stackWithFingerprints = (...allowedFingerprints: string[]) => new CorsaMockStack(new App(), 'test', {
+    ...DEFAULT_PROPS,
+    allowedFingerprints,
+  });
+
+  Template.fromStack(stackWithFingerprints('A'.repeat(64), 'b'.repeat(64))).hasResourceProperties('AWS::Lambda::Function', {
+    Environment: {
+      Variables: Match.objectLike({ ALLOWED_CERT_FINGERPRINTS: `${'a'.repeat(64)},${'b'.repeat(64)}` }),
+    },
+  });
+  expect(() => stackWithFingerprints('abc')).toThrow(/SHA-256 fingerprint/);
 });

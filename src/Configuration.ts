@@ -15,6 +15,10 @@ export interface Configuration {
    * PEM file with the public certificates of the CAs that sign client certificates.
    */
   truststorePath: string;
+  /**
+   * SHA-256 fingerprints of the client certificates that are accepted. Empty means none.
+   */
+  allowedFingerprints: string[];
   failure?: FailureInjectionOptions;
 }
 
@@ -31,6 +35,7 @@ export const configs: Record<string, Configuration> = {
     },
     attachmentRetention: Duration.days(90),
     truststorePath: 'truststore/development.pem',
+    allowedFingerprints: [],
     failure: {
       percentage: 70,
       modes: ['soap-fault', 'fo02', 'http503', 'lost-response', 'timeout'],
@@ -51,6 +56,7 @@ export const configs: Record<string, Configuration> = {
     },
     attachmentRetention: Duration.days(30),
     truststorePath: 'truststore/acceptance.pem',
+    allowedFingerprints: [],
   },
   production: {
     branch: 'production',
@@ -64,5 +70,6 @@ export const configs: Record<string, Configuration> = {
     },
     attachmentRetention: Duration.days(1),
     truststorePath: 'truststore/production.pem',
+    allowedFingerprints: [],
   },
 };
