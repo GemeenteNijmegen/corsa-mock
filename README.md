@@ -98,20 +98,26 @@ A client needs:
 curl --cert client.pem --key client.key https://corsa-mock.<account zone>/health
 ```
 
+Send request bodies as uncompressed UTF-8.
+
 Requests that take longer than 29 seconds get a `504` from API Gateway. A request, including its headers and other event data, can be at most 6 MB.
 
 ## Certificates
 
 Each environment has its own private CA. The public CA certificate is in `truststore/<environment>.pem`. Private keys never belong in this repository; synth fails when the trust store contains one, or a certificate that is not a CA.
 
-Create a CA:
+Run the commands below in a directory outside this repository, so that the keys stay out of it.
+
+Create a CA and add its public certificate to the trust store:
 
 ```sh
 openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 1825 \
   -subj "/CN=corsa-mock <environment> CA" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
-  -keyout ca.key -out truststore/<environment>.pem
+  -keyout ca.key -out ca.pem
+mkdir -p <repository>/truststore
+cat ca.pem >> <repository>/truststore/<environment>.pem
 ```
 
 Create a client certificate:
@@ -119,11 +125,9 @@ Create a client certificate:
 ```sh
 openssl req -newkey rsa:3072 -nodes -subj "/CN=<client>" -keyout client.key -out client.csr
 printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n' > client.ext
-openssl x509 -req -in client.csr -CA truststore/<environment>.pem -CAkey ca.key -CAserial ca.srl -CAcreateserial \
+openssl x509 -req -in client.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
   -days 397 -sha256 -extfile client.ext -out client.pem
 ```
-
-Keep `ca.key`, `client.key` and the other generated files outside the repository.
 
 Allow the client: add its fingerprint to `allowedFingerprints` in [src/Configuration.ts](src/Configuration.ts) and deploy. Colons and upper case are allowed.
 
@@ -133,7 +137,7 @@ openssl x509 -in client.pem -noout -fingerprint -sha256
 
 - Replace a client certificate: add the new fingerprint, deploy, switch the client, remove the old fingerprint, deploy.
 - Revoke a client certificate: remove its fingerprint and deploy. Revocation lists and OCSP are not checked.
-- Replace a CA: add the new CA to the PEM file, next to the old one, and deploy. Replace the client certificates as above. Then remove the old CA and deploy.
+- Replace a CA: create the new CA in a new directory with the commands above, which adds it next to the old one, and deploy. Replace the client certificates as above. Then remove the old CA and deploy.
 
 The name of the trust store object contains a hash of its content, so API Gateway reloads it when the file changes.
 
@@ -243,7 +247,7 @@ Functional errors are answered as HTTP 500 with a SOAP fault holding a Fo02 mess
 This is a [projen](https://projen.io) project. Change [.projenrc.ts](.projenrc.ts) instead of the generated files, then run `npx projen`.
 
 ```sh
-npx projen build    # compile, test, lint and synth
+BRANCH_NAME=development npx projen build   # compile, test, lint and synth
 npx projen test     # jest and eslint
 BRANCH_NAME=development npx projen synth   # synth only
 BRANCH_NAME=development npx projen diff    # compare with the deployed pipeline stack
