@@ -101,6 +101,7 @@ class SingleStackStage extends Stage {
     super(scope, id, props);
     new CorsaMockStack(this, 'api', {
       attachmentRetention: props.configuration.attachmentRetention,
+      truststorePath: props.configuration.truststorePath,
       failure: props.configuration.failure,
     });
   }

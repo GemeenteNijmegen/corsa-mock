@@ -11,6 +11,10 @@ export interface Configuration {
   deployToEnvironment: Environment;
   deployFromEnvironment: Environment;
   attachmentRetention: Duration;
+  /**
+   * PEM file with the public certificates of the CAs that sign client certificates.
+   */
+  truststorePath: string;
   failure?: FailureInjectionOptions;
 }
 
@@ -26,6 +30,7 @@ export const configs: Record<string, Configuration> = {
       region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(90),
+    truststorePath: 'truststore/development.pem',
     failure: {
       percentage: 70,
       modes: ['soap-fault', 'fo02', 'http503', 'lost-response', 'timeout'],
@@ -45,6 +50,7 @@ export const configs: Record<string, Configuration> = {
       region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(30),
+    truststorePath: 'truststore/acceptance.pem',
   },
   production: {
     branch: 'production',
@@ -57,5 +63,6 @@ export const configs: Record<string, Configuration> = {
       region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(1),
+    truststorePath: 'truststore/production.pem',
   },
 };
