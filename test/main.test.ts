@@ -33,7 +33,7 @@ test('Failure injection settings are passed to the Lambda', () => {
       modes: ['timeout', 'lost-response'],
       operations: ['creeerZaak', 'voegZaakdocumentToe'],
       seed: 'run-1',
-      timeout: Duration.seconds(40),
+      timeout: Duration.seconds(25),
     },
   });
 
@@ -44,16 +44,24 @@ test('Failure injection settings are passed to the Lambda', () => {
         FAILURE_MODES: 'timeout,lost-response',
         FAILURE_OPERATIONS: 'creeerZaak,voegZaakdocumentToe',
         FAILURE_SEED: 'run-1',
-        FAILURE_TIMEOUT_MS: '40000',
+        FAILURE_TIMEOUT_MS: '25000',
       }),
     },
   });
 });
 
-test('Failure timeout must be shorter than the Lambda timeout', () => {
-  const app = new App();
-  expect(() => new CorsaMockStack(app, 'test', {
+test('Failure timeout can be at most 27 seconds', () => {
+  const stackWithTimeout = (seconds: number) => new CorsaMockStack(new App(), 'test', {
     attachmentRetention: Duration.days(1),
-    failure: { timeout: Duration.minutes(2) },
-  })).toThrow(/shorter than the Lambda timeout/);
+    failure: { timeout: Duration.seconds(seconds) },
+  });
+
+  expect(() => stackWithTimeout(27)).not.toThrow();
+  expect(() => stackWithTimeout(28)).toThrow(/at most 27 seconds/);
+});
+
+test('The Lambda times out no later than API Gateway', () => {
+  const stack = new CorsaMockStack(new App(), 'test', { attachmentRetention: Duration.days(1) });
+
+  Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Function', { Timeout: 29 });
 });

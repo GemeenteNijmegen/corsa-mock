@@ -68,7 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       modes: modes as FailureMode[],
       operations: list(env.FAILURE_OPERATIONS ?? ''),
       seed: env.FAILURE_SEED ?? '',
-      timeoutMs: Number(env.FAILURE_TIMEOUT_MS ?? '31000'),
+      timeoutMs: Number(env.FAILURE_TIMEOUT_MS ?? '25000'),
     },
   };
 }

@@ -31,7 +31,7 @@ export const configs: Record<string, Configuration> = {
       modes: ['soap-fault', 'fo02', 'http503', 'lost-response', 'timeout'],
       operations: [], // all
       seed: '123',
-      timeout: Duration.seconds(59),
+      timeout: Duration.seconds(25),
     },
   },
   acceptance: {

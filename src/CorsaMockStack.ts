@@ -45,11 +45,17 @@ export interface FailureInjectionOptions {
    */
   seed?: string;
   /**
-   * How long the `timeout` mode waits before answering. Must stay below the Lambda timeout.
-   * @default Duration.millis(31000)
+   * How long the `timeout` mode waits before answering. At most 27 seconds.
+   * @default Duration.seconds(25)
    */
   timeout?: Duration;
 }
+
+// API Gateway stops waiting after 29 seconds, so running longer has no use.
+const LAMBDA_TIMEOUT = Duration.seconds(29);
+
+// Leaves 2 seconds for storage calls and a cold start.
+const MAX_FAILURE_TIMEOUT = LAMBDA_TIMEOUT.minus(Duration.seconds(2));
 
 export class CorsaMockStack extends Stack {
   constructor(scope: Construct, id: string, props: CorsaMockStackProps) {
@@ -77,14 +83,13 @@ export class CorsaMockStack extends Stack {
       generateSecretString: { excludePunctuation: true, passwordLength: 32 },
     });
 
-    const timeout = Duration.minutes(2); // Longer than the default FAILURE_TIMEOUT_MS of the timeout failure mode
     const failureTimeout = props.failure?.timeout;
-    if (failureTimeout && failureTimeout.toMilliseconds() >= timeout.toMilliseconds()) {
-      throw new Error(`failure.timeout must be shorter than the Lambda timeout (${timeout.toHumanString()})`);
+    if (failureTimeout && failureTimeout.toMilliseconds() > MAX_FAILURE_TIMEOUT.toMilliseconds()) {
+      throw new Error(`failure.timeout must be at most ${MAX_FAILURE_TIMEOUT.toHumanString()}`);
     }
 
     const mock = new CorsaMockFunction(this, 'function', {
-      timeout,
+      timeout: LAMBDA_TIMEOUT,
       memorySize: 512,
       logGroup: new LogGroup(this, 'logs', { retention: RetentionDays.ONE_MONTH }),
       environment: {
