@@ -6,6 +6,7 @@ const project = new GemeenteNijmegenCdkApp({
   packageManager: javascript.NodePackageManager.NPM,
   projenrcTs: true,
   devDeps: [],
+  gitignore: ['*.key', '*.srl'], // Private keys and serial files of certificates
   deps: [
     '@aws-sdk/client-s3',
     '@gemeentenijmegen/projen-project-type',
