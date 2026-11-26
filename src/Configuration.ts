@@ -34,8 +34,10 @@ export const configs: Record<string, Configuration> = {
       region: 'eu-central-1',
     },
     attachmentRetention: Duration.days(90),
-    truststorePath: 'truststore/development.pem',
-    allowedFingerprints: [],
+    truststorePath: 'truststore/ca-bundle.pem',
+    allowedFingerprints: [
+      '95:FB:03:46:A0:13:79:E7:F3:33:B8:E2:B3:0A:88:5A:6D:E6:75:FE:2D:B0:EF:16:33:BC:16:00:C5:85:86:1F', // docpoc cert
+    ],
     failure: {
       percentage: 70,
       modes: ['soap-fault', 'fo02', 'http503', 'lost-response', 'timeout'],
