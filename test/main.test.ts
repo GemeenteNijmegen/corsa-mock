@@ -1,10 +1,17 @@
+import { join } from 'node:path';
 import { App, Duration } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { CorsaMockStack } from '../src/CorsaMockStack';
 
+const DEFAULT_PROPS = {
+  attachmentRetention: Duration.days(1),
+  truststorePath: join(__dirname, 'fixtures/test-ca.pem'),
+  allowedFingerprints: [],
+};
+
 test('Snapshot', () => {
   const app = new App();
-  const stack = new CorsaMockStack(app, 'test', { attachmentRetention: Duration.days(1) });
+  const stack = new CorsaMockStack(app, 'test', DEFAULT_PROPS);
 
   const template = Template.fromStack(stack);
   expect(template.toJSON()).toMatchSnapshot();
@@ -12,7 +19,7 @@ test('Snapshot', () => {
 
 test('Attachments expire after the configured retention', () => {
   const app = new App();
-  const stack = new CorsaMockStack(app, 'test', { attachmentRetention: Duration.days(30) });
+  const stack = new CorsaMockStack(app, 'test', { ...DEFAULT_PROPS, attachmentRetention: Duration.days(30) });
 
   Template.fromStack(stack).hasResourceProperties('AWS::S3::Bucket', {
     LifecycleConfiguration: {
@@ -27,7 +34,7 @@ test('Attachments expire after the configured retention', () => {
 test('Failure injection settings are passed to the Lambda', () => {
   const app = new App();
   const stack = new CorsaMockStack(app, 'test', {
-    attachmentRetention: Duration.days(1),
+    ...DEFAULT_PROPS,
     failure: {
       percentage: 25,
       modes: ['timeout', 'lost-response'],
@@ -52,7 +59,7 @@ test('Failure injection settings are passed to the Lambda', () => {
 
 test('Failure timeout can be at most 27 seconds', () => {
   const stackWithTimeout = (seconds: number) => new CorsaMockStack(new App(), 'test', {
-    attachmentRetention: Duration.days(1),
+    ...DEFAULT_PROPS,
     failure: { timeout: Duration.seconds(seconds) },
   });
 
@@ -61,7 +68,36 @@ test('Failure timeout can be at most 27 seconds', () => {
 });
 
 test('The Lambda times out no later than API Gateway', () => {
-  const stack = new CorsaMockStack(new App(), 'test', { attachmentRetention: Duration.days(1) });
+  const stack = new CorsaMockStack(new App(), 'test', DEFAULT_PROPS);
 
   Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Function', { Timeout: 29 });
+});
+
+test('The mTLS domain is the only way in', () => {
+  const template = Template.fromStack(new CorsaMockStack(new App(), 'test', DEFAULT_PROPS));
+
+  template.resourceCountIs('AWS::Lambda::Url', 0);
+  template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+  template.hasResourceProperties('AWS::ApiGateway::RestApi', { DisableExecuteApiEndpoint: true });
+  template.hasResourceProperties('AWS::ApiGateway::DomainName', { MutualTlsAuthentication: Match.anyValue() });
+});
+
+test('The state bucket keeps its logical id', () => {
+  const template = Template.fromStack(new CorsaMockStack(new App(), 'test', DEFAULT_PROPS));
+
+  expect(template.toJSON().Resources).toHaveProperty('stateEC29AD4A');
+});
+
+test('Allowed fingerprints are validated and passed to the Lambda', () => {
+  const stackWithFingerprints = (...allowedFingerprints: string[]) => new CorsaMockStack(new App(), 'test', {
+    ...DEFAULT_PROPS,
+    allowedFingerprints,
+  });
+
+  Template.fromStack(stackWithFingerprints('A'.repeat(64), 'b'.repeat(64))).hasResourceProperties('AWS::Lambda::Function', {
+    Environment: {
+      Variables: Match.objectLike({ ALLOWED_CERT_FINGERPRINTS: `${'a'.repeat(64)},${'b'.repeat(64)}` }),
+    },
+  });
+  expect(() => stackWithFingerprints('abc')).toThrow(/SHA-256 fingerprint/);
 });

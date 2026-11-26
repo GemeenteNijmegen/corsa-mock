@@ -1,18 +1,29 @@
 import { PermissionsBoundaryAspect } from '@gemeentenijmegen/aws-constructs';
 import { Aspects, CfnOutput, Duration, Stack, StackProps } from 'aws-cdk-lib';
-import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { HostedZone } from 'aws-cdk-lib/aws-route53';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
-import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
+import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
+import { normalizeFingerprint } from './corsa-mock/clientCertificate';
 import { ATTACHMENT_TAG, FailureMode } from './corsa-mock/config';
 import { CorsaMockFunction } from './corsa-mock/corsa-mock-function';
+import { MtlsApi } from './MtlsApi';
+import { Statics } from './Statics';
 
 export interface CorsaMockStackProps extends StackProps {
   /**
    * How long uploaded documents (attachments) are kept in the bucket.
    */
   attachmentRetention: Duration;
+  /**
+   * PEM file with the public certificates of the CAs that sign client certificates.
+   */
+  truststorePath: string;
+  /**
+   * SHA-256 fingerprints of the client certificates that are accepted. Empty means none.
+   */
+  allowedFingerprints: string[];
   /**
    * Failure injection settings. Leave out to deploy without injected failures.
    */
@@ -77,12 +88,6 @@ export class CorsaMockStack extends Stack {
       ],
     });
 
-    // The Function URL is public, so every request path must start with this secret.
-    const pathSecret = new Secret(this, 'path-secret', {
-      description: 'Path prefix required on every request to the corsa mock',
-      generateSecretString: { excludePunctuation: true, passwordLength: 32 },
-    });
-
     const failureTimeout = props.failure?.timeout;
     if (failureTimeout && failureTimeout.toMilliseconds() > MAX_FAILURE_TIMEOUT.toMilliseconds()) {
       throw new Error(`failure.timeout must be at most ${MAX_FAILURE_TIMEOUT.toHumanString()}`);
@@ -94,23 +99,25 @@ export class CorsaMockStack extends Stack {
       logGroup: new LogGroup(this, 'logs', { retention: RetentionDays.ONE_MONTH }),
       environment: {
         MOCK_BUCKET: bucket.bucketName,
-        PATH_SECRET: pathSecret.secretValue.unsafeUnwrap(),
+        ALLOWED_CERT_FINGERPRINTS: props.allowedFingerprints.map(normalizeFingerprint).join(','),
         ...failureEnvironment(props.failure),
       },
     });
     bucket.grantReadWrite(mock);
 
-    const url = mock.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
-
-    new CfnOutput(this, 'url', {
-      value: url.url,
-      description: 'Append the value of the path secret (see output path-secret-name) and a / to get the ZAAKDMS_URL',
+    const api = new MtlsApi(this, 'mtls-api', {
+      handler: mock,
+      hostedZone: HostedZone.fromHostedZoneAttributes(this, 'hosted-zone', {
+        hostedZoneId: StringParameter.valueForStringParameter(this, Statics.ssmHostedZoneId),
+        zoneName: StringParameter.valueForStringParameter(this, Statics.ssmHostedZoneName),
+      }),
+      subdomain: Statics.subdomain,
+      truststorePath: props.truststorePath,
     });
 
-    // Output descriptions must be literal strings, so the (tokenized) secret name gets its own output.
-    new CfnOutput(this, 'path-secret-name', {
-      value: pathSecret.secretName,
-      description: 'Name of the secret holding the path prefix for the corsa mock',
+    new CfnOutput(this, 'url', {
+      value: `https://${api.domainName}/`,
+      description: 'The ZAAKDMS_URL. Requires a client certificate',
     });
   }
 }
