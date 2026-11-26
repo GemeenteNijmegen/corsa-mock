@@ -1,3 +1,5 @@
+import { normalizeFingerprint } from './clientCertificate';
+
 export const FAILURE_MODES = ['soap-fault', 'fo02', 'http503', 'timeout', 'lost-response'] as const;
 export type FailureMode = (typeof FAILURE_MODES)[number];
 
@@ -16,9 +18,9 @@ export interface Config {
    */
   prefix: string;
   /**
-   * When set, every request path must start with `/<pathSecret>/`.
+   * SHA-256 fingerprints of the client certificates that are accepted. Empty means none.
    */
-  pathSecret: string;
+  allowedFingerprints: string[];
   /**
    * Store every incoming request body (without document content) under `requests/`.
    */
@@ -60,7 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     bucket: env.MOCK_BUCKET ?? '',
     prefix: env.MOCK_PREFIX ?? '',
-    pathSecret: env.PATH_SECRET ?? '',
+    allowedFingerprints: list(env.ALLOWED_CERT_FINGERPRINTS ?? '').map(normalizeFingerprint),
     storeRequests: (env.STORE_REQUESTS ?? 'true') !== 'false',
     documentIdPrefix: env.DOCUMENT_ID_PREFIX ?? 'MOCK-DOC-',
     failure: {
@@ -68,7 +70,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       modes: modes as FailureMode[],
       operations: list(env.FAILURE_OPERATIONS ?? ''),
       seed: env.FAILURE_SEED ?? '',
-      timeoutMs: Number(env.FAILURE_TIMEOUT_MS ?? '31000'),
+      timeoutMs: Number(env.FAILURE_TIMEOUT_MS ?? '25000'),
     },
   };
 }

@@ -2,12 +2,14 @@ import { App } from 'aws-cdk-lib';
 import { configs } from './Configuration';
 import { PipelineStack } from './PipelineStack';
 
-if (!process.env.BRANCH_NAME) {
+let branchName = process.env.BRANCH_NAME;
+if (!branchName) {
   const branchnames = Object.keys(configs);
-  throw Error(`Should set a branch name for deployment: ${branchnames}`);
+  console.log(`Should set a branch name for deployment: ${branchnames}, defaulting to development`);
+  branchName = 'development';
 }
 
-const config = configs[process.env.BRANCH_NAME!];
+const config = configs[branchName];
 
 const app = new App();
 

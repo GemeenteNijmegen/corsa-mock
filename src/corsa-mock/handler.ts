@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Chaos } from './chaos';
+import { readClientCertificate } from './clientCertificate';
 import { Config, FailureMode } from './config';
 import { OPERATIONS, StufError, ZaakdmsMock, uniqueName } from './operations';
 import * as soap from './soap';
@@ -8,14 +9,12 @@ import { ObjectStore } from './store';
 import { replaceContent } from './xml';
 
 /**
- * The parts of a Lambda Function URL / API Gateway HTTP API (payload 2.0) event this mock
- * uses. API Gateway REST API (payload 1.0) events also work through `path`/`httpMethod`.
+ * The parts of an API Gateway REST API event this mock uses.
  */
 export interface HttpEvent {
-  rawPath?: string;
   path?: string;
   httpMethod?: string;
-  requestContext?: { http?: { method?: string } };
+  requestContext?: { identity?: { clientCert?: { clientCertPem?: string } | null } };
   headers?: Record<string, string | undefined>;
   body?: string | null;
   isBase64Encoded?: boolean;
@@ -38,15 +37,17 @@ export function createHandler(config: Config, store: ObjectStore, dependencies: 
   const wait = dependencies.wait ?? sleep;
 
   return async (event: HttpEvent): Promise<HttpResult> => {
-    const method = (event.requestContext?.http?.method ?? event.httpMethod ?? 'GET').toUpperCase();
-    let path = event.rawPath ?? event.path ?? '/';
-
-    if (config.pathSecret) {
-      if (!path.startsWith(`/${config.pathSecret}/`)) {
-        return plain(404, 'Not Found');
-      }
-      path = path.slice(config.pathSecret.length + 1);
+    // API Gateway accepts every certificate from a trusted CA, so check that it is a known client.
+    const certificate = readClientCertificate(event.requestContext?.identity?.clientCert?.clientCertPem);
+    if (!certificate || !config.allowedFingerprints.includes(certificate.fingerprint)) {
+      const reason = certificate ? 'not-allowed' : 'no-readable-certificate';
+      console.warn(JSON.stringify({ outcome: 'client-refused', status: 403, reason, ...certificate }));
+      return plain(403, 'Forbidden');
     }
+
+    const method = (event.httpMethod ?? 'GET').toUpperCase();
+    const path = event.path ?? '/';
+
     if (method === 'GET' && path.replace(/\/+$/, '').endsWith('/health')) {
       return plain(200, 'ok');
     }
