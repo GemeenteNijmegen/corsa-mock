@@ -41,6 +41,9 @@ client ──POST, client certificate──▶ API Gateway ──▶ Lambda ─�
 | `updateZaak_Lk01`                    | `OntvangAsynchroon`           | Stores a result (resultaat omschrijving, einddatum) for an existing zaak. The latest one wins.                                                                  | `Bv03`                                |
 | `genereerDocumentIdentificatie_Di02` | `VerwerkSynchroonVrijBericht` | Generates a new document identificatie, `DOCUMENT_ID_PREFIX` followed by a unique suffix.                                                                       | `genereerDocumentIdentificatie_Du02`  |
 | `voegZaakdocumentToe_Lk01`           | `OntvangAsynchroon`           | Decodes the base64 `inhoud` and stores the file and its metadata with the zaak. Fails if the zaak does not exist or the document identificatie is already used. | `Bv03`                                |
+| `updateZaakdocument_Di02`            | `VerwerkSynchroonVrijBericht` | Stores a new version of a document of the zaak: its file and metadata. Earlier versions are kept. Fails if the zaak or the document in that zaak does not exist, or without `inhoud`. | `Bv02`                                |
+| `geefLijstZaakdocumenten_Lv01`       | `BeantwoordVraag`             | Returns the zaak with one `heeftRelevant` per document, in order of arrival, with the metadata of each document's latest version.                         | `zakLa01` (empty answer if not found) |
+| `geefZaakdocumentLezen_Lv01`         | `BeantwoordVraag`             | Returns the latest version of a document: its metadata, the zaak, and the content as base64 `inhoud`. Fails with `MOCK-VERLOPEN` when the file has been removed after the retention period. | `edcLa01` (empty answer if not found) |
 
 Any other `SOAPAction` is answered with a SOAP fault (`MOCK-NIET-ONDERSTEUND`) that lists the supported actions.
 
@@ -50,6 +53,11 @@ Some details of the answers are there because the laravel-zaakdms client depends
 - `Bv03` and `zakLa01` always contain a `crossRefnummer`, also when the request had no `referentienummer`.
 - `zakLa01` always contains the `corsa_dossierid` extra element.
 - Every XML response has an `esbbusinessproces` header with the operation name.
+- `updateZaakdocument_Di02` is answered with a `Bv02` that has a `crossRefnummer`; the client returns that number and fails without it.
+- In `edcLa01`, `inhoud` has `stuf:bestandsnaam` as its only attribute. The client removes that prefix explicitly and keeps the prefix of any other attribute.
+- The client adds `?documentType=native` to the endpoint of `geefZaakdocumentLezen`. API Gateway passes the query string separately, and the mock ignores it.
+- A document identificatie belongs to one zaak: adding the same identificatie to another zaak gives `MOCK-BESTAAT-AL`. A file called `metadata.json` is stored as `bestand-metadata.json`, because each document's metadata uses that name.
+- `geefZaakdocumentLezen` only names the document. The mock finds its zaak through `documenten/{document}.json`, which `voegZaakdocumentToe` writes. Documents added before that index existed can't be read; they answer as not found.
 
 ## Deploying
 
@@ -100,7 +108,7 @@ curl --cert client.pem --key client.key https://corsa-mock.<account zone>/health
 
 Send request bodies as uncompressed UTF-8.
 
-Requests that take longer than 29 seconds get a `504` from API Gateway. A request, including its headers and other event data, can be at most 6 MB.
+Requests that take longer than 29 seconds get a `504` from API Gateway. A request, including its headers and other event data, can be at most 6 MB. The same goes for an answer, so `geefZaakdocumentLezen` can return any document that fit in a `voegZaakdocumentToe` or `updateZaakdocument_Di02` request, but nothing much larger.
 
 ## Certificates
 
@@ -160,7 +168,9 @@ The Lambda is configured with environment variables, read in [src/corsa-mock/con
 
 Invalid values for `ALLOWED_CERT_FINGERPRINTS`, `FAILURE_PERCENTAGE` or `FAILURE_MODES` make the Lambda fail on start, with an error that says what is allowed.
 
-The operation names for `FAILURE_OPERATIONS` are: `geefZaakDetails`, `creeerZaak`, `actualiseerZaakstatus`, `updateZaak`, `genereerDocumentIdentificatie` and `voegZaakdocumentToe`.
+The operation names for `FAILURE_OPERATIONS` are: `geefZaakDetails`, `creeerZaak`, `actualiseerZaakstatus`, `updateZaak`, `genereerDocumentIdentificatie`, `voegZaakdocumentToe`, `updateZaakDocument`, `geefLijstZaakdocumenten` and `geefZaakdocumentLezen`.
+
+Failures with `FAILURE_SEED` are counted per zaak for most operations. `geefZaakdocumentLezen` counts per document, because its question only names the document.
 
 Settings in [src/Configuration.ts](src/Configuration.ts), per environment:
 
@@ -220,11 +230,16 @@ zaken/{zaak}/statussen/{tijdstip}-{random}.json     one per actualiseerZaakstatu
 zaken/{zaak}/resultaat/{tijdstip}-{random}.json     one per updateZaak, the latest wins
 zaken/{zaak}/documenten/{document}/metadata.json    document metadata, created once
 zaken/{zaak}/documenten/{document}/{bestandsnaam}   the decoded document file
+zaken/{zaak}/documenten/{document}/versies/{tijdstip}-{random}/metadata.json   one per updateZaakDocument
+zaken/{zaak}/documenten/{document}/versies/{tijdstip}-{random}/{bestandsnaam}  the file of that version
+documenten/{document}.json                          the zaak of the document, created once
 requests/{date}/{tijdstip}-{operation}-{key}.xml    every request, without document content
 chaos/attempts/{operation}/{key}/...                attempt counters for deterministic failures
 ```
 
-Only document files are tagged `type=attachment` and removed after `attachmentRetention`. The rest of the data stays until you remove it.
+Only document files, of every version, are tagged `type=attachment` and removed after `attachmentRetention`. The rest of the data stays until you remove it.
+
+The latest version of a document is the last one under `versies/` (the names sort by time), or the first `metadata.json` when there are no updates. Two updates in the same millisecond have no defined order.
 
 Every request is also logged to CloudWatch as one JSON line with the operation, endpoint, key, attempt, outcome (`ok`, `injected:<mode>`, `stuf-error:<code>`, `unsupported`, `wrong-endpoint`) and HTTP status. Refused clients are logged with outcome `client-refused`, the reason, and the fingerprint and subject of the certificate when it could be read.
 
@@ -237,7 +252,8 @@ Functional errors are answered as HTTP 500 with a SOAP fault holding a Fo02 mess
 | `MOCK-NIET-ONDERSTEUND`  | The `SOAPAction` is not one of the supported operations.                                              |
 | `MOCK-VERKEERD-ENDPOINT` | The request was sent to the wrong endpoint for this operation (often a missing `/` in `ZAAKDMS_URL`). |
 | `MOCK-ONGELDIG`          | A required element is missing or empty. `details` names the element.                                  |
-| `MOCK-NIET-GEVONDEN`     | The zaak does not exist (status, update or document for an unknown zaak).                             |
+| `MOCK-NIET-GEVONDEN`     | The zaak does not exist (status, update or document for an unknown zaak), or `updateZaakdocument_Di02` names a document that is not in the zaak. |
+| `MOCK-VERLOPEN`          | `geefZaakdocumentLezen` for a document whose file was removed after `attachmentRetention`.            |
 | `MOCK-BESTAAT-AL`        | The zaak or document identificatie already exists.                                                    |
 | `MOCK-INJECTED`          | A failure injected on purpose.                                                                        |
 | `MOCK-INTERN`            | An unexpected error in the mock itself. Check the CloudWatch logs.                                    |
@@ -268,3 +284,5 @@ npx projen bundle   # needed before running the tests on their own
 | [src/corsa-mock/config.ts](src/corsa-mock/config.ts)         | Environment variables                                 |
 | [src/corsa-mock/store.ts](src/corsa-mock/store.ts)           | S3 store, and an in-memory store for tests            |
 | [src/corsa-mock/xml.ts](src/corsa-mock/xml.ts)               | Minimal XML helpers for the messages the client sends |
+| [test/stuf.ts](test/stuf.ts)                                 | Requests shaped like the client's templates, for tests |
+| [test/client-compatibility.test.ts](test/client-compatibility.test.ts) | Reads answers the way the client does         |
