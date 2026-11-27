@@ -86,6 +86,33 @@ interface ZaakRecord {
   aangemaaktOp: string;
 }
 
+/**
+ * Metadata of one version of a document, as stored in metadata.json (the first version) or
+ * versies/{tijdstip}.json (each update).
+ */
+interface DocumentRecord {
+  identificatie: string;
+  zaak: string;
+  bestandsnaam: string;
+  /**
+   * Key of the file in the store. Missing in documents stored before versions existed; their
+   * file is next to metadata.json, under the bestandsnaam.
+   */
+  bestand?: string;
+  bytes: number;
+  titel?: string;
+  documenttype?: string;
+  creatiedatum?: string;
+  ontvangstdatum?: string;
+  verzenddatum?: string;
+  beschrijving?: string;
+  status?: string;
+  formaat?: string;
+  vertrouwelijkAanduiding?: string;
+  auteur?: string;
+  ontvangenOp: string;
+}
+
 interface StatusRecord {
   volgnummer?: string;
   omschrijving?: string;
@@ -227,12 +254,13 @@ export class ZaakdmsMock {
     }
     const bestandsnaam = safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`);
     const content = Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64');
-    const documentPrefix = `${zaakPrefix(zaakId)}documenten/${encodeURIComponent(documentId)}/`;
+    const prefix = documentPrefix(zaakId, documentId);
 
-    const metadata = {
+    const metadata: DocumentRecord = {
       identificatie: documentId,
       zaak: zaakId,
       bestandsnaam,
+      bestand: prefix + bestandsnaam,
       bytes: content.length,
       titel: text(object, 'titel'),
       documenttype: text(object, 'dct.omschrijving'),
@@ -246,7 +274,7 @@ export class ZaakdmsMock {
       auteur: text(object, 'auteur'),
       ontvangenOp: new Date().toISOString(),
     };
-    const created = await this.store.put(`${documentPrefix}metadata.json`, JSON.stringify(metadata, null, 2), {
+    const created = await this.store.put(`${prefix}metadata.json`, JSON.stringify(metadata, null, 2), {
       contentType: 'application/json',
       createOnly: true,
     });
@@ -258,9 +286,13 @@ export class ZaakdmsMock {
         details: `Document ${documentId} bestaat al`,
       });
     }
-    await this.store.put(documentPrefix + bestandsnaam, content, {
+    await this.store.put(prefix + bestandsnaam, content, {
       contentType: 'application/octet-stream',
       tags: { [ATTACHMENT_TAG.key]: ATTACHMENT_TAG.value },
+    });
+    await this.store.put(documentIndexKey(documentId), JSON.stringify({ identificatie: documentId, zaak: zaakId }, null, 2), {
+      contentType: 'application/json',
+      createOnly: true,
     });
     return soap.bv03(context);
   }
@@ -294,6 +326,17 @@ function zaakPrefix(identificatie: string): string {
 
 function zaakKey(identificatie: string): string {
   return `${zaakPrefix(identificatie)}zaak.json`;
+}
+
+function documentPrefix(zaak: string, document: string): string {
+  return `${zaakPrefix(zaak)}documenten/${encodeURIComponent(document)}/`;
+}
+
+/**
+ * Which zaak a document belongs to, for questions that only name the document.
+ */
+function documentIndexKey(document: string): string {
+  return `documenten/${encodeURIComponent(document)}.json`;
 }
 
 /**
