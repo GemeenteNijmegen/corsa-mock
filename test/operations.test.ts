@@ -302,3 +302,58 @@ describe('geefLijstZaakdocumenten', () => {
     expect(listAnswer(response.body)).toBeUndefined();
   });
 });
+
+describe('failure injection on the document operations', () => {
+  const always = (operations: string, modes = 'soap-fault') => ({ FAILURE_PERCENTAGE: '100', FAILURE_OPERATIONS: operations, FAILURE_MODES: modes });
+
+  test('FAILURE_OPERATIONS can target updateZaakDocument alone', async () => {
+    const { send } = await zaakWithDocument(always('updateZaakDocument'));
+
+    const updated = await send('updateZaakdocument_Di02', 'VerwerkSynchroonVrijBericht', updateZaakDocument({ identificatie: 'DOC-1', zaak: 'ZAAK-1' }));
+    const listed = await send('geefLijstZaakdocumenten_Lv01', 'BeantwoordVraag', zaakVraag('ZAAK-1'));
+    const read = await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'));
+
+    expect(updated.statusCode).toBe(500);
+    expect(updated.body).toContain('MOCK-INJECTED');
+    expect(listed.statusCode).toBe(200);
+    expect(read.statusCode).toBe(200);
+  });
+
+  test.each([
+    ['geefLijstZaakdocumenten', 'geefLijstZaakdocumenten_Lv01', () => zaakVraag('ZAAK-1')],
+    ['geefZaakdocumentLezen', 'geefZaakdocumentLezen_Lv01', () => geefZaakdocumentLezen('DOC-1')],
+  ])('FAILURE_OPERATIONS can target %s', async (operation, action, body) => {
+    const { send } = await zaakWithDocument(always(operation, 'http503'));
+
+    expect((await send(action, 'BeantwoordVraag', body())).statusCode).toBe(503);
+  });
+
+  test('deterministic failures count attempts per zaak for the update and the list, and per document for reading', async () => {
+    const { send, store } = await zaakWithDocument({
+      FAILURE_PERCENTAGE: '1',
+      FAILURE_SEED: 'run-1',
+      FAILURE_OPERATIONS: 'updateZaakDocument,geefLijstZaakdocumenten,geefZaakdocumentLezen',
+    });
+
+    await send('updateZaakdocument_Di02', 'VerwerkSynchroonVrijBericht', updateZaakDocument({ identificatie: 'DOC-1', zaak: 'ZAAK-1' }));
+    await send('geefLijstZaakdocumenten_Lv01', 'BeantwoordVraag', zaakVraag('ZAAK-1'));
+    await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'));
+
+    const attempts = [...store.objects.keys()].filter((key) => key.startsWith('chaos/attempts/')).map((key) => key.split('/').slice(2, 4).join('/'));
+    expect(attempts).toEqual(expect.arrayContaining([
+      'updateZaakDocument/ZAAK-1',
+      'geefLijstZaakdocumenten/ZAAK-1',
+      'geefZaakdocumentLezen/DOC-1',
+    ]));
+  });
+
+  test('a lost response on updateZaakDocument still stores the new version', async () => {
+    const { send } = await zaakWithDocument(always('updateZaakDocument', 'lost-response'));
+
+    const updated = await send('updateZaakdocument_Di02', 'VerwerkSynchroonVrijBericht', updateZaakDocument({ identificatie: 'DOC-1', zaak: 'ZAAK-1', content: 'after the lost response' }));
+    const read = readAnswer((await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'))).body)!;
+
+    expect(updated.statusCode).toBe(502);
+    expect(read.content).toBe('after the lost response');
+  });
+});
