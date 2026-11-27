@@ -51,6 +51,10 @@
       "type": "build"
     },
     {
+      "name": "fast-xml-parser",
+      "type": "build"
+    },
+    {
       "name": "jest",
       "type": "build"
     },

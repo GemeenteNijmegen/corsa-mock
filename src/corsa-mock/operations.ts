@@ -41,6 +41,12 @@ export const OPERATIONS: Record<string, Operation> = {
     key: zaakObjectKey,
     handle: (mock, xml, context) => mock.actualiseerZaakstatus(xml, context),
   },
+  updateZaakdocument_Di02: {
+    name: 'updateZaakDocument',
+    endpoint: 'VerwerkSynchroonVrijBericht',
+    key: (xml) => text(section(section(xml, 'object'), 'isRelevantVoor'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.updateZaakDocument(xml, context),
+  },
   updateZaak_Lk01: {
     name: 'updateZaak',
     endpoint: 'OntvangAsynchroon',
@@ -52,6 +58,18 @@ export const OPERATIONS: Record<string, Operation> = {
     endpoint: 'VerwerkSynchroonVrijBericht',
     key: () => '',
     handle: (mock, _xml, context) => mock.genereerDocumentIdentificatie(context),
+  },
+  geefLijstZaakdocumenten_Lv01: {
+    name: 'geefLijstZaakdocumenten',
+    endpoint: 'BeantwoordVraag',
+    key: (xml) => text(section(xml, 'gelijk'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.geefLijstZaakdocumenten(xml, context),
+  },
+  geefZaakdocumentLezen_Lv01: {
+    name: 'geefZaakdocumentLezen',
+    endpoint: 'BeantwoordVraag',
+    key: (xml) => text(section(xml, 'gelijk'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.geefZaakdocumentLezen(xml, context),
   },
   voegZaakdocumentToe_Lk01: {
     name: 'voegZaakdocumentToe',
@@ -84,6 +102,33 @@ interface ZaakRecord {
   zaaktype: { code?: string; omschrijving?: string };
   initiator?: Record<string, string | undefined>;
   aangemaaktOp: string;
+}
+
+/**
+ * Metadata of one version of a document, as stored in metadata.json (the first version) or
+ * versies/{tijdstip}-{random}/metadata.json (each update).
+ */
+interface DocumentRecord {
+  identificatie: string;
+  zaak: string;
+  bestandsnaam: string;
+  /**
+   * Key of the file in the store.
+   */
+  bestand: string;
+  bytes: number;
+  titel?: string;
+  documenttype?: string;
+  creatiedatum?: string;
+  ontvangstdatum?: string;
+  verzenddatum?: string;
+  beschrijving?: string;
+  status?: string;
+  formaat?: string;
+  taal?: string;
+  vertrouwelijkAanduiding?: string;
+  auteur?: string;
+  ontvangenOp: string;
 }
 
 interface StatusRecord {
@@ -221,32 +266,11 @@ export class ZaakdmsMock {
     const zaakId = required(text(section(object, 'isRelevantVoor'), 'identificatie'), 'isRelevantVoor/gerelateerde/identificatie');
     await this.requireZaak(zaakId);
 
-    const inhoud = element(object, 'inhoud');
-    if (!inhoud) {
-      throw invalid('object/inhoud');
-    }
-    const bestandsnaam = safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`);
-    const content = Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64');
-    const documentPrefix = `${zaakPrefix(zaakId)}documenten/${encodeURIComponent(documentId)}/`;
-
-    const metadata = {
-      identificatie: documentId,
-      zaak: zaakId,
-      bestandsnaam,
-      bytes: content.length,
-      titel: text(object, 'titel'),
-      documenttype: text(object, 'dct.omschrijving'),
-      creatiedatum: text(object, 'creatiedatum'),
-      ontvangstdatum: text(object, 'ontvangstdatum'),
-      verzenddatum: text(object, 'verzenddatum'),
-      beschrijving: text(object, 'beschrijving'),
-      status: text(object, 'status'),
-      formaat: text(object, 'formaat'),
-      vertrouwelijkAanduiding: text(object, 'vertrouwelijkAanduiding'),
-      auteur: text(object, 'auteur'),
-      ontvangenOp: new Date().toISOString(),
-    };
-    const created = await this.store.put(`${documentPrefix}metadata.json`, JSON.stringify(metadata, null, 2), {
+    await this.claimDocumentIdentificatie(documentId, zaakId);
+    const { bestandsnaam, content } = readInhoud(object, documentId);
+    const prefix = documentPrefix(zaakId, documentId);
+    const metadata = documentRecord(object, documentId, zaakId, bestandsnaam, prefix + bestandsnaam, content);
+    const created = await this.store.put(`${prefix}metadata.json`, JSON.stringify(metadata, null, 2), {
       contentType: 'application/json',
       createOnly: true,
     });
@@ -258,11 +282,124 @@ export class ZaakdmsMock {
         details: `Document ${documentId} bestaat al`,
       });
     }
-    await this.store.put(documentPrefix + bestandsnaam, content, {
+    await this.putFile(prefix + bestandsnaam, content);
+    return soap.bv03(context);
+  }
+
+  /**
+   * Writes the index entry of a document before the document itself, so a document is never
+   * stored without one. A document identificatie belongs to one zaak; a retry for the same zaak
+   * finds its own entry and carries on.
+   */
+  private async claimDocumentIdentificatie(documentId: string, zaakId: string): Promise<void> {
+    const key = documentIndexKey(documentId);
+    const created = await this.store.put(key, JSON.stringify({ identificatie: documentId, zaak: zaakId }, null, 2), {
+      contentType: 'application/json',
+      createOnly: true,
+    });
+    if (created) {
+      return;
+    }
+    const existing = await this.readJson<{ zaak: string }>(key);
+    if (existing && existing.zaak !== zaakId) {
+      throw new StufError({
+        code: 'MOCK-BESTAAT-AL',
+        plek: 'client',
+        omschrijving: 'Object al aanwezig',
+        details: `Document ${documentId} bestaat al in zaak ${existing.zaak}`,
+      });
+    }
+  }
+
+  /**
+   * Stores a new version of a document that is in the zaak. The file is written before its
+   * metadata, so a reader never finds a version without its file.
+   */
+  async updateZaakDocument(xml: string, context: MessageContext): Promise<string> {
+    const object = section(xml, 'object');
+    const documentId = required(text(object, 'identificatie'), 'object/identificatie');
+    const zaakId = required(text(section(object, 'isRelevantVoor'), 'identificatie'), 'isRelevantVoor/gerelateerde/identificatie');
+    await this.requireZaak(zaakId);
+    const prefix = documentPrefix(zaakId, documentId);
+    if (!await this.store.get(`${prefix}metadata.json`)) {
+      throw new StufError({
+        code: 'MOCK-NIET-GEVONDEN',
+        plek: 'client',
+        omschrijving: 'Object niet gevonden',
+        details: `Document ${documentId} bestaat niet in zaak ${zaakId}`,
+      });
+    }
+
+    const { bestandsnaam, content } = readInhoud(object, documentId);
+    const versionPrefix = `${prefix}versies/${uniqueName()}/`;
+    await this.putFile(versionPrefix + bestandsnaam, content);
+    const version = documentRecord(object, documentId, zaakId, bestandsnaam, versionPrefix + bestandsnaam, content);
+    await this.store.put(`${versionPrefix}metadata.json`, JSON.stringify(version, null, 2), { contentType: 'application/json' });
+    return soap.bv02(context);
+  }
+
+  /**
+   * The documents of the zaak in order of arrival, each with the metadata of its latest version.
+   */
+  async geefLijstZaakdocumenten(xml: string, context: MessageContext): Promise<string> {
+    const zaakId = required(text(section(xml, 'gelijk'), 'identificatie'), 'gelijk/identificatie');
+    if (!await this.store.get(zaakKey(zaakId))) {
+      return soap.zaakDocumentenLa01(context, undefined, []);
+    }
+
+    const prefix = `${zaakPrefix(zaakId)}documenten/`;
+    const documentIds = (await this.store.list(prefix))
+      .map((key) => key.slice(prefix.length).split('/'))
+      .filter((parts) => parts.length === 2 && parts[1] === 'metadata.json')
+      .map((parts) => decodeURIComponent(parts[0]!));
+
+    const documents: { first: DocumentRecord; latest: DocumentRecord }[] = [];
+    for (const documentId of documentIds) {
+      const first = await this.readJson<DocumentRecord>(`${documentPrefix(zaakId, documentId)}metadata.json`);
+      const latest = await this.latestVersion(zaakId, documentId);
+      if (first && latest) {
+        documents.push({ first, latest });
+      }
+    }
+    documents.sort((a, b) => a.first.ontvangenOp.localeCompare(b.first.ontvangenOp));
+    return soap.zaakDocumentenLa01(context, zaakId, documents.map(({ latest }) => latest));
+  }
+
+  async geefZaakdocumentLezen(xml: string, context: MessageContext): Promise<string> {
+    const identificatie = required(text(section(xml, 'gelijk'), 'identificatie'), 'gelijk/identificatie');
+    const index = await this.readJson<{ zaak: string }>(documentIndexKey(identificatie));
+    const document = index && await this.latestVersion(index.zaak, identificatie);
+    if (!document) {
+      return soap.edcLa01(context, undefined);
+    }
+
+    const content = await this.store.get(document.bestand);
+    if (!content) {
+      throw new StufError({
+        code: 'MOCK-VERLOPEN',
+        plek: 'server',
+        omschrijving: 'Bestand niet meer beschikbaar',
+        details: `Het bestand van document ${identificatie} is verwijderd na de bewaartermijn van de mock`,
+      });
+    }
+    return soap.edcLa01(context, { ...document, content });
+  }
+
+  /**
+   * The newest version of a document: the last update, else the version it was added with.
+   */
+  private async latestVersion(zaak: string, document: string): Promise<DocumentRecord | undefined> {
+    const prefix = documentPrefix(zaak, document);
+    const versions = (await this.store.list(`${prefix}versies/`)).filter((key) => key.endsWith('/metadata.json')).sort();
+    const last = versions[versions.length - 1];
+    return this.readJson<DocumentRecord>(last ?? `${prefix}metadata.json`);
+  }
+
+  private async putFile(key: string, content: Buffer): Promise<void> {
+    await this.store.put(key, content, {
       contentType: 'application/octet-stream',
       tags: { [ATTACHMENT_TAG.key]: ATTACHMENT_TAG.value },
     });
-    return soap.bv03(context);
   }
 
   private async requireZaak(identificatie: string): Promise<void> {
@@ -294,6 +431,52 @@ function zaakPrefix(identificatie: string): string {
 
 function zaakKey(identificatie: string): string {
   return `${zaakPrefix(identificatie)}zaak.json`;
+}
+
+function documentPrefix(zaak: string, document: string): string {
+  return `${zaakPrefix(zaak)}documenten/${encodeURIComponent(document)}/`;
+}
+
+function readInhoud(object: string, documentId: string): { bestandsnaam: string; content: Buffer } {
+  const inhoud = element(object, 'inhoud');
+  if (!inhoud) {
+    throw invalid('object/inhoud');
+  }
+  const bestandsnaam = safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`);
+  return {
+    // Next to each file is its metadata.json, which the file must not overwrite.
+    bestandsnaam: bestandsnaam === 'metadata.json' ? 'bestand-metadata.json' : bestandsnaam,
+    content: Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64'),
+  };
+}
+
+function documentRecord(object: string, identificatie: string, zaak: string, bestandsnaam: string, bestand: string, content: Buffer): DocumentRecord {
+  return {
+    identificatie,
+    zaak,
+    bestandsnaam,
+    bestand,
+    bytes: content.length,
+    titel: text(object, 'titel'),
+    documenttype: text(object, 'dct.omschrijving'),
+    creatiedatum: text(object, 'creatiedatum'),
+    ontvangstdatum: text(object, 'ontvangstdatum'),
+    verzenddatum: text(object, 'verzenddatum'),
+    beschrijving: text(object, 'beschrijving'),
+    status: text(object, 'status'),
+    formaat: text(object, 'formaat'),
+    taal: text(object, 'taal'),
+    vertrouwelijkAanduiding: text(object, 'vertrouwelijkAanduiding'),
+    auteur: text(object, 'auteur'),
+    ontvangenOp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Which zaak a document belongs to, for questions that only name the document.
+ */
+function documentIndexKey(document: string): string {
+  return `documenten/${encodeURIComponent(document)}.json`;
 }
 
 /**

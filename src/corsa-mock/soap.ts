@@ -57,6 +57,13 @@ function stuurgegevens(context: MessageContext, values: Stuurgegevens, element =
 }
 
 /**
+ * Acknowledgement of a Di02 message such as updateZaakdocument. The client reads `stuf:crossRefnummer`.
+ */
+export function bv02(context: MessageContext): string {
+  return envelope(`<stuf:Bv02Bericht>${stuurgegevens(withCrossRef(context), { berichtcode: 'Bv02' })}</stuf:Bv02Bericht>`);
+}
+
+/**
  * Acknowledgement of an asynchronous Lk01 message. The client reads `stuf:crossRefnummer`.
  */
 export function bv03(context: MessageContext): string {
@@ -81,9 +88,6 @@ export interface ZaakDetails {
  * `zaak` undefined gives an empty answer, which is how StUF reports "not found".
  */
 export function zaakLa01(context: MessageContext, zaak: ZaakDetails | undefined): string {
-  const optional = (name: string, value: string | undefined) =>
-    value === undefined ? '' : `<zkn:${name}>${escape(value)}</zkn:${name}>`;
-
   const antwoord = zaak === undefined ? '' : '<zkn:antwoord><zkn:object stuf:entiteittype="ZAK">'
     + `<zkn:identificatie>${escape(zaak.identificatie)}</zkn:identificatie>`
     + optional('omschrijving', zaak.omschrijving)
@@ -111,6 +115,88 @@ export function zaakLa01(context: MessageContext, zaak: ZaakDetails | undefined)
     + '<zkn:parameters><stuf:indicatorVervolgvraag>false</stuf:indicatorVervolgvraag></zkn:parameters>'
     + antwoord
     + '</zkn:zakLa01>');
+}
+
+function optional(name: string, value: string | undefined): string {
+  return value === undefined ? '' : `<zkn:${name}>${escape(value)}</zkn:${name}>`;
+}
+
+export interface DocumentDetails {
+  identificatie: string;
+  zaak: string;
+  bestandsnaam: string;
+  content: Buffer;
+  titel?: string;
+  documenttype?: string;
+  creatiedatum?: string;
+  ontvangstdatum?: string;
+  verzenddatum?: string;
+  beschrijving?: string;
+  formaat?: string;
+  taal?: string;
+  status?: string;
+  vertrouwelijkAanduiding?: string;
+  auteur?: string;
+}
+
+export type DocumentSummary = Omit<DocumentDetails, 'content' | 'bestandsnaam' | 'zaak'>;
+
+/**
+ * Answer to geefLijstZaakdocumenten: the zaak object with one heeftRelevant per document.
+ * The client returns `zkn:object`; corsa-zgw reads `heeftRelevant/gerelateerde/identificatie`.
+ * `zaak` undefined gives an empty answer, as for geefZaakDetails.
+ */
+export function zaakDocumentenLa01(context: MessageContext, zaak: string | undefined, documents: DocumentSummary[]): string {
+  const antwoord = zaak === undefined ? '' : '<zkn:antwoord><zkn:object stuf:entiteittype="ZAK">'
+    + `<zkn:identificatie>${escape(zaak)}</zkn:identificatie>`
+    + documents.map((document) => '<zkn:heeftRelevant stuf:entiteittype="ZAKEDC"><zkn:gerelateerde stuf:entiteittype="EDC">'
+      + `<zkn:identificatie>${escape(document.identificatie)}</zkn:identificatie>`
+      + optional('dct.omschrijving', document.documenttype)
+      + optional('creatiedatum', document.creatiedatum)
+      + optional('titel', document.titel)
+      + optional('formaat', document.formaat)
+      + optional('status', document.status)
+      + optional('vertrouwelijkAanduiding', document.vertrouwelijkAanduiding)
+      + '</zkn:gerelateerde></zkn:heeftRelevant>').join('')
+    + '</zkn:object></zkn:antwoord>';
+
+  return envelope('<zkn:zakLa01>'
+    + stuurgegevens(withCrossRef(context), { berichtcode: 'La01', entiteittype: 'ZAK' }, 'zkn:stuurgegevens')
+    + '<zkn:parameters><stuf:indicatorVervolgvraag>false</stuf:indicatorVervolgvraag></zkn:parameters>'
+    + antwoord
+    + '</zkn:zakLa01>');
+}
+
+/**
+ * Answer to geefZaakdocumentLezen. The client reads `zkn:inhoud` and `zkn:object`. The only
+ * attribute on inhoud is `stuf:bestandsnaam`: the client removes that prefix explicitly and
+ * would trip over other prefixed attributes. `document` undefined gives an empty answer.
+ */
+export function edcLa01(context: MessageContext, document: DocumentDetails | undefined): string {
+  const antwoord = document === undefined ? '' : '<zkn:antwoord><zkn:object stuf:entiteittype="EDC">'
+    + `<zkn:identificatie>${escape(document.identificatie)}</zkn:identificatie>`
+    + optional('dct.omschrijving', document.documenttype)
+    + optional('creatiedatum', document.creatiedatum)
+    + optional('ontvangstdatum', document.ontvangstdatum)
+    + optional('titel', document.titel)
+    + optional('beschrijving', document.beschrijving)
+    + optional('formaat', document.formaat)
+    + optional('taal', document.taal)
+    + optional('status', document.status)
+    + optional('verzenddatum', document.verzenddatum)
+    + optional('vertrouwelijkAanduiding', document.vertrouwelijkAanduiding)
+    + optional('auteur', document.auteur)
+    + `<zkn:inhoud stuf:bestandsnaam="${escape(document.bestandsnaam)}">${document.content.toString('base64')}</zkn:inhoud>`
+    + '<zkn:isRelevantVoor stuf:entiteittype="EDCZAK"><zkn:gerelateerde stuf:entiteittype="ZAK">'
+    + `<zkn:identificatie>${escape(document.zaak)}</zkn:identificatie>`
+    + '</zkn:gerelateerde></zkn:isRelevantVoor>'
+    + '</zkn:object></zkn:antwoord>';
+
+  return envelope('<zkn:edcLa01>'
+    + stuurgegevens(withCrossRef(context), { berichtcode: 'La01', entiteittype: 'EDC' }, 'zkn:stuurgegevens')
+    + '<zkn:parameters><stuf:indicatorVervolgvraag>false</stuf:indicatorVervolgvraag></zkn:parameters>'
+    + antwoord
+    + '</zkn:edcLa01>');
 }
 
 /**

@@ -6,7 +6,7 @@ const project = new GemeenteNijmegenCdkApp({
   name: 'corsa-mock',
   packageManager: javascript.NodePackageManager.NPM,
   projenrcTs: true,
-  devDeps: [],
+  devDeps: ['fast-xml-parser'],
   gitignore: ['*.key', '*.srl'], // Private keys and serial files of certificates
   deps: [
     '@aws-sdk/client-s3',
