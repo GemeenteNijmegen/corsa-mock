@@ -41,6 +41,12 @@ export const OPERATIONS: Record<string, Operation> = {
     key: zaakObjectKey,
     handle: (mock, xml, context) => mock.actualiseerZaakstatus(xml, context),
   },
+  updateZaakdocument_Di02: {
+    name: 'updateZaakDocument',
+    endpoint: 'VerwerkSynchroonVrijBericht',
+    key: (xml) => text(section(section(xml, 'object'), 'isRelevantVoor'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.updateZaakDocument(xml, context),
+  },
   updateZaak_Lk01: {
     name: 'updateZaak',
     endpoint: 'OntvangAsynchroon',
@@ -255,33 +261,9 @@ export class ZaakdmsMock {
     const zaakId = required(text(section(object, 'isRelevantVoor'), 'identificatie'), 'isRelevantVoor/gerelateerde/identificatie');
     await this.requireZaak(zaakId);
 
-    const inhoud = element(object, 'inhoud');
-    if (!inhoud) {
-      throw invalid('object/inhoud');
-    }
-    const bestandsnaam = safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`);
-    const content = Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64');
+    const { bestandsnaam, content } = readInhoud(object, documentId);
     const prefix = documentPrefix(zaakId, documentId);
-
-    const metadata: DocumentRecord = {
-      identificatie: documentId,
-      zaak: zaakId,
-      bestandsnaam,
-      bestand: prefix + bestandsnaam,
-      bytes: content.length,
-      titel: text(object, 'titel'),
-      documenttype: text(object, 'dct.omschrijving'),
-      creatiedatum: text(object, 'creatiedatum'),
-      ontvangstdatum: text(object, 'ontvangstdatum'),
-      verzenddatum: text(object, 'verzenddatum'),
-      beschrijving: text(object, 'beschrijving'),
-      status: text(object, 'status'),
-      formaat: text(object, 'formaat'),
-      taal: text(object, 'taal'),
-      vertrouwelijkAanduiding: text(object, 'vertrouwelijkAanduiding'),
-      auteur: text(object, 'auteur'),
-      ontvangenOp: new Date().toISOString(),
-    };
+    const metadata = documentRecord(object, documentId, zaakId, bestandsnaam, prefix + bestandsnaam, content);
     const created = await this.store.put(`${prefix}metadata.json`, JSON.stringify(metadata, null, 2), {
       contentType: 'application/json',
       createOnly: true,
@@ -294,15 +276,39 @@ export class ZaakdmsMock {
         details: `Document ${documentId} bestaat al`,
       });
     }
-    await this.store.put(prefix + bestandsnaam, content, {
-      contentType: 'application/octet-stream',
-      tags: { [ATTACHMENT_TAG.key]: ATTACHMENT_TAG.value },
-    });
+    await this.putFile(prefix + bestandsnaam, content);
     await this.store.put(documentIndexKey(documentId), JSON.stringify({ identificatie: documentId, zaak: zaakId }, null, 2), {
       contentType: 'application/json',
       createOnly: true,
     });
     return soap.bv03(context);
+  }
+
+  /**
+   * Stores a new version of a document that is in the zaak. The file is written before its
+   * metadata, so a reader never finds a version without its file.
+   */
+  async updateZaakDocument(xml: string, context: MessageContext): Promise<string> {
+    const object = section(xml, 'object');
+    const documentId = required(text(object, 'identificatie'), 'object/identificatie');
+    const zaakId = required(text(section(object, 'isRelevantVoor'), 'identificatie'), 'isRelevantVoor/gerelateerde/identificatie');
+    await this.requireZaak(zaakId);
+    const prefix = documentPrefix(zaakId, documentId);
+    if (!await this.store.get(`${prefix}metadata.json`)) {
+      throw new StufError({
+        code: 'MOCK-NIET-GEVONDEN',
+        plek: 'client',
+        omschrijving: 'Object niet gevonden',
+        details: `Document ${documentId} bestaat niet in zaak ${zaakId}`,
+      });
+    }
+
+    const { bestandsnaam, content } = readInhoud(object, documentId);
+    const versionPrefix = `${prefix}versies/${uniqueName()}/`;
+    await this.putFile(versionPrefix + bestandsnaam, content);
+    const version = documentRecord(object, documentId, zaakId, bestandsnaam, versionPrefix + bestandsnaam, content);
+    await this.store.put(`${versionPrefix}metadata.json`, JSON.stringify(version, null, 2), { contentType: 'application/json' });
+    return soap.bv02(context);
   }
 
   async geefZaakdocumentLezen(xml: string, context: MessageContext): Promise<string> {
@@ -333,6 +339,13 @@ export class ZaakdmsMock {
     const versions = (await this.store.list(`${prefix}versies/`)).filter((key) => key.endsWith('/metadata.json')).sort();
     const last = versions[versions.length - 1];
     return this.readJson<DocumentRecord>(last ?? `${prefix}metadata.json`);
+  }
+
+  private async putFile(key: string, content: Buffer): Promise<void> {
+    await this.store.put(key, content, {
+      contentType: 'application/octet-stream',
+      tags: { [ATTACHMENT_TAG.key]: ATTACHMENT_TAG.value },
+    });
   }
 
   private async requireZaak(identificatie: string): Promise<void> {
@@ -368,6 +381,39 @@ function zaakKey(identificatie: string): string {
 
 function documentPrefix(zaak: string, document: string): string {
   return `${zaakPrefix(zaak)}documenten/${encodeURIComponent(document)}/`;
+}
+
+function readInhoud(object: string, documentId: string): { bestandsnaam: string; content: Buffer } {
+  const inhoud = element(object, 'inhoud');
+  if (!inhoud) {
+    throw invalid('object/inhoud');
+  }
+  return {
+    bestandsnaam: safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`),
+    content: Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64'),
+  };
+}
+
+function documentRecord(object: string, identificatie: string, zaak: string, bestandsnaam: string, bestand: string, content: Buffer): DocumentRecord {
+  return {
+    identificatie,
+    zaak,
+    bestandsnaam,
+    bestand,
+    bytes: content.length,
+    titel: text(object, 'titel'),
+    documenttype: text(object, 'dct.omschrijving'),
+    creatiedatum: text(object, 'creatiedatum'),
+    ontvangstdatum: text(object, 'ontvangstdatum'),
+    verzenddatum: text(object, 'verzenddatum'),
+    beschrijving: text(object, 'beschrijving'),
+    status: text(object, 'status'),
+    formaat: text(object, 'formaat'),
+    taal: text(object, 'taal'),
+    vertrouwelijkAanduiding: text(object, 'vertrouwelijkAanduiding'),
+    auteur: text(object, 'auteur'),
+    ontvangenOp: new Date().toISOString(),
+  };
 }
 
 function fileKey(document: DocumentRecord): string {

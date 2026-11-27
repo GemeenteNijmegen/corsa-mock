@@ -57,6 +57,13 @@ function stuurgegevens(context: MessageContext, values: Stuurgegevens, element =
 }
 
 /**
+ * Acknowledgement of a Di02 message such as updateZaakdocument. The client reads `stuf:crossRefnummer`.
+ */
+export function bv02(context: MessageContext): string {
+  return envelope(`<stuf:Bv02Bericht>${stuurgegevens(withCrossRef(context), { berichtcode: 'Bv02' })}</stuf:Bv02Bericht>`);
+}
+
+/**
  * Acknowledgement of an asynchronous Lk01 message. The client reads `stuf:crossRefnummer`.
  */
 export function bv03(context: MessageContext): string {
