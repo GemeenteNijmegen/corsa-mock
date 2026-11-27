@@ -59,6 +59,12 @@ export const OPERATIONS: Record<string, Operation> = {
     key: () => '',
     handle: (mock, _xml, context) => mock.genereerDocumentIdentificatie(context),
   },
+  geefLijstZaakdocumenten_Lv01: {
+    name: 'geefLijstZaakdocumenten',
+    endpoint: 'BeantwoordVraag',
+    key: (xml) => text(section(xml, 'gelijk'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.geefLijstZaakdocumenten(xml, context),
+  },
   geefZaakdocumentLezen_Lv01: {
     name: 'geefZaakdocumentLezen',
     endpoint: 'BeantwoordVraag',
@@ -309,6 +315,33 @@ export class ZaakdmsMock {
     const version = documentRecord(object, documentId, zaakId, bestandsnaam, versionPrefix + bestandsnaam, content);
     await this.store.put(`${versionPrefix}metadata.json`, JSON.stringify(version, null, 2), { contentType: 'application/json' });
     return soap.bv02(context);
+  }
+
+  /**
+   * The documents of the zaak in order of arrival, each with the metadata of its latest version.
+   */
+  async geefLijstZaakdocumenten(xml: string, context: MessageContext): Promise<string> {
+    const zaakId = required(text(section(xml, 'gelijk'), 'identificatie'), 'gelijk/identificatie');
+    if (!await this.store.get(zaakKey(zaakId))) {
+      return soap.zaakDocumentenLa01(context, undefined, []);
+    }
+
+    const prefix = `${zaakPrefix(zaakId)}documenten/`;
+    const documentIds = (await this.store.list(prefix))
+      .map((key) => key.slice(prefix.length).split('/'))
+      .filter((parts) => parts.length === 2 && parts[1] === 'metadata.json')
+      .map((parts) => decodeURIComponent(parts[0]!));
+
+    const documents: { first: DocumentRecord; latest: DocumentRecord }[] = [];
+    for (const documentId of documentIds) {
+      const first = await this.readJson<DocumentRecord>(`${documentPrefix(zaakId, documentId)}metadata.json`);
+      const latest = await this.latestVersion(zaakId, documentId);
+      if (first && latest) {
+        documents.push({ first, latest });
+      }
+    }
+    documents.sort((a, b) => a.first.ontvangenOp.localeCompare(b.first.ontvangenOp));
+    return soap.zaakDocumentenLa01(context, zaakId, documents.map(({ latest }) => latest));
   }
 
   async geefZaakdocumentLezen(xml: string, context: MessageContext): Promise<string> {

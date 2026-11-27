@@ -1,4 +1,4 @@
-import { creeerZaak, geefZaakdocumentLezen, setup, updateZaakDocument, voegZaakdocumentToe } from './stuf';
+import { creeerZaak, geefZaakdocumentLezen, setup, updateZaakDocument, voegZaakdocumentToe, zaakVraag } from './stuf';
 import { attribute, element, section, text } from '../src/corsa-mock/xml';
 
 beforeEach(() => {
@@ -219,5 +219,86 @@ describe('updateZaakDocument', () => {
 
     expect(response.statusCode).toBe(500);
     expect(response.body).toContain('MOCK-VERKEERD-ENDPOINT');
+  });
+});
+
+/**
+ * Reads the list the way corsa-zgw does: the zaak object, then heeftRelevant/gerelateerde/identificatie.
+ */
+function listAnswer(body: string) {
+  const object = section(section(section(body, 'zakLa01'), 'antwoord'), 'object');
+  if (!object) {
+    return undefined;
+  }
+  const documents = [...object.matchAll(/<zkn:heeftRelevant[^>]*>([\s\S]*?)<\/zkn:heeftRelevant>/g)].map((match) => {
+    const gerelateerde = section(match[1]!, 'gerelateerde');
+    return { identificatie: text(gerelateerde, 'identificatie'), titel: text(gerelateerde, 'titel'), vertrouwelijkAanduiding: text(gerelateerde, 'vertrouwelijkAanduiding') };
+  });
+  return { zaak: text(object, 'identificatie'), documents };
+}
+
+describe('geefLijstZaakdocumenten', () => {
+  afterEach(() => jest.useRealTimers());
+
+  const list = (send: ReturnType<typeof setup>['send'], zaak = 'ZAAK-1') =>
+    send('geefLijstZaakdocumenten_Lv01', 'BeantwoordVraag', zaakVraag(zaak));
+
+  test('lists a zaak without documents', async () => {
+    const { send } = setup();
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-1'));
+
+    const response = await list(send);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers.esbbusinessproces).toBe('geefLijstZaakdocumenten');
+    expect(listAnswer(response.body)).toEqual({ zaak: 'ZAAK-1', documents: [] });
+  });
+
+  test('lists every document of the zaak once, in order of arrival, with the latest metadata', async () => {
+    const { send } = setup();
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-1'));
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-2'));
+    for (const [second, identificatie] of [[1, 'DOC-C'], [2, 'DOC-A'], [3, 'DOC-B']] as const) {
+      jest.setSystemTime(new Date(`2026-11-27T10:00:0${second}Z`));
+      await send('voegZaakdocumentToe_Lk01', 'OntvangAsynchroon', voegZaakdocumentToe({ identificatie, zaak: 'ZAAK-1' }));
+    }
+    await send('voegZaakdocumentToe_Lk01', 'OntvangAsynchroon', voegZaakdocumentToe({ identificatie: 'DOC-OTHER', zaak: 'ZAAK-2' }));
+    jest.setSystemTime(new Date('2026-11-27T10:00:09Z'));
+    await send('updateZaakdocument_Di02', 'VerwerkSynchroonVrijBericht', updateZaakDocument({
+      identificatie: 'DOC-C',
+      zaak: 'ZAAK-1',
+      titel: 'Nieuwe titel',
+      vertrouwelijkAanduiding: 'GEHEIM',
+    }));
+
+    const answer = listAnswer((await list(send)).body);
+
+    expect(answer).toEqual({
+      zaak: 'ZAAK-1',
+      documents: [
+        { identificatie: 'DOC-C', titel: 'Nieuwe titel', vertrouwelijkAanduiding: 'GEHEIM' },
+        { identificatie: 'DOC-A', titel: 'Titel DOC-A', vertrouwelijkAanduiding: 'ZAAKVERTROUWELIJK' },
+        { identificatie: 'DOC-B', titel: 'Titel DOC-B', vertrouwelijkAanduiding: 'ZAAKVERTROUWELIJK' },
+      ],
+    });
+  });
+
+  test('marks each document as an EDC related through ZAKEDC', async () => {
+    const { send } = await zaakWithDocument();
+
+    const body = (await list(send)).body;
+
+    expect(body).toContain('<zkn:heeftRelevant stuf:entiteittype="ZAKEDC"><zkn:gerelateerde stuf:entiteittype="EDC"><zkn:identificatie>DOC-1</zkn:identificatie>');
+  });
+
+  test('gives an empty answer for an unknown zaak', async () => {
+    const { send } = setup();
+
+    const response = await list(send, 'ZAAK-9');
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('<zkn:zakLa01>');
+    expect(listAnswer(response.body)).toBeUndefined();
   });
 });

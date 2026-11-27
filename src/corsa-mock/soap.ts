@@ -140,6 +140,34 @@ export interface DocumentDetails {
   auteur?: string;
 }
 
+export type DocumentSummary = Omit<DocumentDetails, 'content' | 'bestandsnaam' | 'zaak'>;
+
+/**
+ * Answer to geefLijstZaakdocumenten: the zaak object with one heeftRelevant per document.
+ * The client returns `zkn:object`; corsa-zgw reads `heeftRelevant/gerelateerde/identificatie`.
+ * `zaak` undefined gives an empty answer, as for geefZaakDetails.
+ */
+export function zaakDocumentenLa01(context: MessageContext, zaak: string | undefined, documents: DocumentSummary[]): string {
+  const antwoord = zaak === undefined ? '' : '<zkn:antwoord><zkn:object stuf:entiteittype="ZAK">'
+    + `<zkn:identificatie>${escape(zaak)}</zkn:identificatie>`
+    + documents.map((document) => '<zkn:heeftRelevant stuf:entiteittype="ZAKEDC"><zkn:gerelateerde stuf:entiteittype="EDC">'
+      + `<zkn:identificatie>${escape(document.identificatie)}</zkn:identificatie>`
+      + optional('dct.omschrijving', document.documenttype)
+      + optional('creatiedatum', document.creatiedatum)
+      + optional('titel', document.titel)
+      + optional('formaat', document.formaat)
+      + optional('status', document.status)
+      + optional('vertrouwelijkAanduiding', document.vertrouwelijkAanduiding)
+      + '</zkn:gerelateerde></zkn:heeftRelevant>').join('')
+    + '</zkn:object></zkn:antwoord>';
+
+  return envelope('<zkn:zakLa01>'
+    + stuurgegevens(withCrossRef(context), { berichtcode: 'La01', entiteittype: 'ZAK' }, 'zkn:stuurgegevens')
+    + '<zkn:parameters><stuf:indicatorVervolgvraag>false</stuf:indicatorVervolgvraag></zkn:parameters>'
+    + antwoord
+    + '</zkn:zakLa01>');
+}
+
 /**
  * Answer to geefZaakdocumentLezen. The client reads `zkn:inhoud` and `zkn:object`. The only
  * attribute on inhoud is `stuf:bestandsnaam`: the client removes that prefix explicitly and
