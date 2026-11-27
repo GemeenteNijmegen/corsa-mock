@@ -3,10 +3,12 @@ import { join } from 'node:path';
 import { loadConfig } from '../src/corsa-mock/config';
 import { createHandler, HttpEvent, HttpResult } from '../src/corsa-mock/handler';
 import { MemoryObjectStore, PutOptions } from '../src/corsa-mock/store';
+import { escape } from '../src/corsa-mock/xml';
 
 /**
  * Requests shaped like the templates of the laravel-zaakdms client
- * (resources/views/*.blade.php), which is what corsa-zgw sends.
+ * (resources/views/*.blade.php), which is what corsa-zgw sends. Values are escaped, as Blade's
+ * {{ }} does.
  */
 
 const ALLOWED_PEM = readFileSync(join(__dirname, 'fixtures/test-client-allowed.pem'), 'utf8');
@@ -90,12 +92,12 @@ function documentObject(fields: DocumentFields, withInhoud = true): string {
     + '<zkn:dct.omschrijving>Bijlage</zkn:dct.omschrijving>'
     + '<zkn:creatiedatum>20261127</zkn:creatiedatum>'
     + (fields.status ? `<zkn:status>${fields.status}</zkn:status>` : '')
-    + `<zkn:titel>${fields.titel ?? `Titel ${fields.identificatie}`}</zkn:titel>`
+    + `<zkn:titel>${escape(fields.titel ?? `Titel ${fields.identificatie}`)}</zkn:titel>`
     + '<zkn:formaat>.txt</zkn:formaat>'
     + '<zkn:taal>nl</zkn:taal>'
     + `<zkn:vertrouwelijkAanduiding>${fields.vertrouwelijkAanduiding ?? 'ZAAKVERTROUWELIJK'}</zkn:vertrouwelijkAanduiding>`
     + '<zkn:auteur>Test</zkn:auteur>'
-    + (withInhoud ? `<zkn:inhoud stuf:bestandsnaam="${fields.bestandsnaam ?? 'titel-1764230400..txt'}">${content.toString('base64')}</zkn:inhoud>` : '')
+    + (withInhoud ? `<zkn:inhoud stuf:bestandsnaam="${escape(fields.bestandsnaam ?? 'titel-1764230400..txt')}">${content.toString('base64')}</zkn:inhoud>` : '')
     + '<zkn:isRelevantVoor stuf:entiteittype="EDCZAK" stuf:verwerkingssoort="I">'
     + `<zkn:gerelateerde stuf:entiteittype="ZAK" stuf:verwerkingssoort="I"><zkn:identificatie>${fields.zaak}</zkn:identificatie></zkn:gerelateerde>`
     + '</zkn:isRelevantVoor>';
