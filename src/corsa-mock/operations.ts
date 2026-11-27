@@ -53,6 +53,12 @@ export const OPERATIONS: Record<string, Operation> = {
     key: () => '',
     handle: (mock, _xml, context) => mock.genereerDocumentIdentificatie(context),
   },
+  geefZaakdocumentLezen_Lv01: {
+    name: 'geefZaakdocumentLezen',
+    endpoint: 'BeantwoordVraag',
+    key: (xml) => text(section(xml, 'gelijk'), 'identificatie') ?? '',
+    handle: (mock, xml, context) => mock.geefZaakdocumentLezen(xml, context),
+  },
   voegZaakdocumentToe_Lk01: {
     name: 'voegZaakdocumentToe',
     endpoint: 'OntvangAsynchroon',
@@ -108,6 +114,7 @@ interface DocumentRecord {
   beschrijving?: string;
   status?: string;
   formaat?: string;
+  taal?: string;
   vertrouwelijkAanduiding?: string;
   auteur?: string;
   ontvangenOp: string;
@@ -270,6 +277,7 @@ export class ZaakdmsMock {
       beschrijving: text(object, 'beschrijving'),
       status: text(object, 'status'),
       formaat: text(object, 'formaat'),
+      taal: text(object, 'taal'),
       vertrouwelijkAanduiding: text(object, 'vertrouwelijkAanduiding'),
       auteur: text(object, 'auteur'),
       ontvangenOp: new Date().toISOString(),
@@ -295,6 +303,36 @@ export class ZaakdmsMock {
       createOnly: true,
     });
     return soap.bv03(context);
+  }
+
+  async geefZaakdocumentLezen(xml: string, context: MessageContext): Promise<string> {
+    const identificatie = required(text(section(xml, 'gelijk'), 'identificatie'), 'gelijk/identificatie');
+    const index = await this.readJson<{ zaak: string }>(documentIndexKey(identificatie));
+    const document = index && await this.latestVersion(index.zaak, identificatie);
+    if (!document) {
+      return soap.edcLa01(context, undefined);
+    }
+
+    const content = await this.store.get(fileKey(document));
+    if (!content) {
+      throw new StufError({
+        code: 'MOCK-VERLOPEN',
+        plek: 'server',
+        omschrijving: 'Bestand niet meer beschikbaar',
+        details: `Het bestand van document ${identificatie} is verwijderd na de bewaartermijn van de mock`,
+      });
+    }
+    return soap.edcLa01(context, { ...document, content });
+  }
+
+  /**
+   * The newest version of a document: the last update, else the version it was added with.
+   */
+  private async latestVersion(zaak: string, document: string): Promise<DocumentRecord | undefined> {
+    const prefix = documentPrefix(zaak, document);
+    const versions = (await this.store.list(`${prefix}versies/`)).filter((key) => key.endsWith('/metadata.json')).sort();
+    const last = versions[versions.length - 1];
+    return this.readJson<DocumentRecord>(last ?? `${prefix}metadata.json`);
   }
 
   private async requireZaak(identificatie: string): Promise<void> {
@@ -330,6 +368,10 @@ function zaakKey(identificatie: string): string {
 
 function documentPrefix(zaak: string, document: string): string {
   return `${zaakPrefix(zaak)}documenten/${encodeURIComponent(document)}/`;
+}
+
+function fileKey(document: DocumentRecord): string {
+  return document.bestand ?? documentPrefix(document.zaak, document.identificatie) + document.bestandsnaam;
 }
 
 /**

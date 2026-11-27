@@ -61,7 +61,9 @@ export function createHandler(config: Config, store: ObjectStore, dependencies: 
     const action = soapAction.slice(soapAction.lastIndexOf('/') + 1);
     const operation = OPERATIONS[action];
     const context = soap.messageContext(xml);
-    const endpoint = path.slice(path.lastIndexOf('/') + 1);
+    // The client adds a query string to some endpoints, such as BeantwoordVraag?documentType=native.
+    const route = path.split('?')[0] ?? '';
+    const endpoint = route.slice(route.lastIndexOf('/') + 1);
     const log = { operation: operation?.name ?? action, endpoint, key: '', attempt: undefined as number | undefined };
 
     try {
