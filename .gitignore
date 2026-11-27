@@ -30,6 +30,8 @@ jspm_packages/
 *.tgz
 .yarn-integrity
 .cache
+*.key
+*.srl
 test-reports/junit.xml
 test/__snapshots__/*
 .env
@@ -63,4 +65,5 @@ junit.xml
 !/.github/workflows/emergency.yml
 !/.github/workflows/auto-merge.yml
 !/.nvmrc
+!/.github/workflows/checkov.yml
 !/.projenrc.ts
