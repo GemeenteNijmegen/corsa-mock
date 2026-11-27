@@ -106,17 +106,16 @@ interface ZaakRecord {
 
 /**
  * Metadata of one version of a document, as stored in metadata.json (the first version) or
- * versies/{tijdstip}.json (each update).
+ * versies/{tijdstip}-{random}/metadata.json (each update).
  */
 interface DocumentRecord {
   identificatie: string;
   zaak: string;
   bestandsnaam: string;
   /**
-   * Key of the file in the store. Missing in documents stored before versions existed; their
-   * file is next to metadata.json, under the bestandsnaam.
+   * Key of the file in the store.
    */
-  bestand?: string;
+  bestand: string;
   bytes: number;
   titel?: string;
   documenttype?: string;
@@ -267,6 +266,7 @@ export class ZaakdmsMock {
     const zaakId = required(text(section(object, 'isRelevantVoor'), 'identificatie'), 'isRelevantVoor/gerelateerde/identificatie');
     await this.requireZaak(zaakId);
 
+    await this.claimDocumentIdentificatie(documentId, zaakId);
     const { bestandsnaam, content } = readInhoud(object, documentId);
     const prefix = documentPrefix(zaakId, documentId);
     const metadata = documentRecord(object, documentId, zaakId, bestandsnaam, prefix + bestandsnaam, content);
@@ -283,11 +283,32 @@ export class ZaakdmsMock {
       });
     }
     await this.putFile(prefix + bestandsnaam, content);
-    await this.store.put(documentIndexKey(documentId), JSON.stringify({ identificatie: documentId, zaak: zaakId }, null, 2), {
+    return soap.bv03(context);
+  }
+
+  /**
+   * Writes the index entry of a document before the document itself, so a document is never
+   * stored without one. A document identificatie belongs to one zaak; a retry for the same zaak
+   * finds its own entry and carries on.
+   */
+  private async claimDocumentIdentificatie(documentId: string, zaakId: string): Promise<void> {
+    const key = documentIndexKey(documentId);
+    const created = await this.store.put(key, JSON.stringify({ identificatie: documentId, zaak: zaakId }, null, 2), {
       contentType: 'application/json',
       createOnly: true,
     });
-    return soap.bv03(context);
+    if (created) {
+      return;
+    }
+    const existing = await this.readJson<{ zaak: string }>(key);
+    if (existing && existing.zaak !== zaakId) {
+      throw new StufError({
+        code: 'MOCK-BESTAAT-AL',
+        plek: 'client',
+        omschrijving: 'Object al aanwezig',
+        details: `Document ${documentId} bestaat al in zaak ${existing.zaak}`,
+      });
+    }
   }
 
   /**
@@ -352,7 +373,7 @@ export class ZaakdmsMock {
       return soap.edcLa01(context, undefined);
     }
 
-    const content = await this.store.get(fileKey(document));
+    const content = await this.store.get(document.bestand);
     if (!content) {
       throw new StufError({
         code: 'MOCK-VERLOPEN',
@@ -421,8 +442,10 @@ function readInhoud(object: string, documentId: string): { bestandsnaam: string;
   if (!inhoud) {
     throw invalid('object/inhoud');
   }
+  const bestandsnaam = safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`);
   return {
-    bestandsnaam: safeFileName(attribute(inhoud.attributes, 'bestandsnaam') || `${documentId}.bin`),
+    // Next to each file is its metadata.json, which the file must not overwrite.
+    bestandsnaam: bestandsnaam === 'metadata.json' ? 'bestand-metadata.json' : bestandsnaam,
     content: Buffer.from(inhoud.inner.replace(/\s/g, ''), 'base64'),
   };
 }
@@ -447,10 +470,6 @@ function documentRecord(object: string, identificatie: string, zaak: string, bes
     auteur: text(object, 'auteur'),
     ontvangenOp: new Date().toISOString(),
   };
-}
-
-function fileKey(document: DocumentRecord): string {
-  return document.bestand ?? documentPrefix(document.zaak, document.identificatie) + document.bestandsnaam;
 }
 
 /**

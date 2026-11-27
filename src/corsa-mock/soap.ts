@@ -88,7 +88,6 @@ export interface ZaakDetails {
  * `zaak` undefined gives an empty answer, which is how StUF reports "not found".
  */
 export function zaakLa01(context: MessageContext, zaak: ZaakDetails | undefined): string {
-
   const antwoord = zaak === undefined ? '' : '<zkn:antwoord><zkn:object stuf:entiteittype="ZAK">'
     + `<zkn:identificatie>${escape(zaak.identificatie)}</zkn:identificatie>`
     + optional('omschrijving', zaak.omschrijving)

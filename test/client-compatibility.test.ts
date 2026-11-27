@@ -64,7 +64,7 @@ test('updateZaakDocument: the client finds the crossRefnummer it returns', async
     updateZaakDocument({ identificatie: 'DOC-1', zaak: 'ZAAK-1' }))).body);
 
   expect(lookup('stufcrossRefnummer')).toBe('DOC-1');
-  expect(lookup('Fo02Bericht')).toBeUndefined();
+  expect(lookup('stufFo02Bericht')).toBeUndefined();
 });
 
 test('geefLijstZaakdocumenten: the client returns the zaak object, and corsa-zgw finds the document identificaties in it', async () => {
@@ -82,7 +82,7 @@ test('geefLijstZaakdocumenten: the client returns the zaak object, and corsa-zgw
 test('geefZaakdocumentLezen: the client finds the content and the document object', async () => {
   const { send } = await zaakWithDocument();
 
-  const lookup = readLikeClient((await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag?documentType=native', geefZaakdocumentLezen('DOC-1'))).body);
+  const lookup = readLikeClient((await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'))).body);
   const inhoud = lookup('zkninhoud');
 
   expect(Buffer.from(inhoud['#text'], 'base64').toString()).toBe('inhoud');
@@ -98,5 +98,5 @@ test('empty answers for an unknown zaak or document are still readable', async (
 
   expect(list('zknobject')).toBeUndefined();
   expect(read('zkninhoud')).toBeUndefined();
-  expect(list('Fo02Bericht')).toBeUndefined();
+  expect(list('stufFo02Bericht')).toBeUndefined();
 });

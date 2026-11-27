@@ -55,7 +55,8 @@ Some details of the answers are there because the laravel-zaakdms client depends
 - Every XML response has an `esbbusinessproces` header with the operation name.
 - `updateZaakdocument_Di02` is answered with a `Bv02` that has a `crossRefnummer`; the client returns that number and fails without it.
 - In `edcLa01`, `inhoud` has `stuf:bestandsnaam` as its only attribute. The client removes that prefix explicitly and keeps the prefix of any other attribute.
-- The client adds `?documentType=native` to the endpoint of `geefZaakdocumentLezen`. The mock ignores a query string.
+- The client adds `?documentType=native` to the endpoint of `geefZaakdocumentLezen`. API Gateway passes the query string separately, and the mock ignores it.
+- A document identificatie belongs to one zaak: adding the same identificatie to another zaak gives `MOCK-BESTAAT-AL`. A file called `metadata.json` is stored as `bestand-metadata.json`, because each document's metadata uses that name.
 - `geefZaakdocumentLezen` only names the document. The mock finds its zaak through `documenten/{document}.json`, which `voegZaakdocumentToe` writes. Documents added before that index existed can't be read; they answer as not found.
 
 ## Deploying

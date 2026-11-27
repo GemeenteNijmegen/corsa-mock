@@ -21,6 +21,42 @@ async function zaakWithDocument(env: NodeJS.ProcessEnv = {}) {
 }
 
 describe('voegZaakdocumentToe', () => {
+  test('refuses a document identificatie that is already used in another zaak', async () => {
+    const { send, store } = await zaakWithDocument();
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-2'));
+
+    const response = await send('voegZaakdocumentToe_Lk01', 'OntvangAsynchroon', voegZaakdocumentToe({ identificatie: 'DOC-1', zaak: 'ZAAK-2' }));
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body).toContain('MOCK-BESTAAT-AL');
+    expect(response.body).toContain('Document DOC-1 bestaat al in zaak ZAAK-1');
+    expect(store.objects.has('zaken/ZAAK-2/documenten/DOC-1/metadata.json')).toBe(false);
+  });
+
+  test('a retry after a failure that left only the index stores the document', async () => {
+    const { send, store } = setup();
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-1'));
+    await store.put('documenten/DOC-1.json', JSON.stringify({ identificatie: 'DOC-1', zaak: 'ZAAK-1' }));
+
+    const response = await send('voegZaakdocumentToe_Lk01', 'OntvangAsynchroon', voegZaakdocumentToe({ identificatie: 'DOC-1', zaak: 'ZAAK-1' }));
+
+    expect(response.statusCode).toBe(200);
+    expect(store.objects.has('zaken/ZAAK-1/documenten/DOC-1/metadata.json')).toBe(true);
+  });
+
+  test('a file called metadata.json doesn\'t overwrite the metadata', async () => {
+    const { send, store } = setup();
+    await send('creeerZaak_Lk01', 'OntvangAsynchroon', creeerZaak('ZAAK-1'));
+
+    await send('voegZaakdocumentToe_Lk01', 'OntvangAsynchroon', voegZaakdocumentToe({ identificatie: 'DOC-1', zaak: 'ZAAK-1', bestandsnaam: 'metadata.json', content: '{"x":1}' }));
+    await send('updateZaakdocument_Di02', 'VerwerkSynchroonVrijBericht', updateZaakDocument({ identificatie: 'DOC-1', zaak: 'ZAAK-1', bestandsnaam: 'metadata.json', content: '{"x":2}' }));
+
+    const answer = readAnswer((await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'))).body)!;
+    expect(answer.content).toBe('{"x":2}');
+    expect(answer.bestandsnaam).toBe('bestand-metadata.json');
+    expect(JSON.parse(store.objects.get('zaken/ZAAK-1/documenten/DOC-1/metadata.json')!.toString()).identificatie).toBe('DOC-1');
+  });
+
   test('stores metadata, the file and an index of the document\'s zaak', async () => {
     const { store } = await zaakWithDocument();
 
@@ -102,27 +138,6 @@ describe('geefZaakdocumentLezen', () => {
 
     expect(response.statusCode).toBe(500);
     expect(response.body).toContain('MOCK-VERLOPEN');
-  });
-
-  test('reads a document stored before files had their own key', async () => {
-    const { send, store } = await zaakWithDocument();
-    const key = 'zaken/ZAAK-1/documenten/DOC-1/metadata.json';
-    const { bestand, ...withoutKey } = JSON.parse(store.objects.get(key)!.toString());
-    store.objects.set(key, Buffer.from(JSON.stringify(withoutKey)));
-
-    const response = await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag', geefZaakdocumentLezen('DOC-1'));
-
-    expect(bestand).toBe('zaken/ZAAK-1/documenten/DOC-1/eerste-1764230400..txt');
-    expect(readAnswer(response.body)!.content).toBe('first version');
-  });
-
-  test('a query string on the endpoint, as the client sends it, is ignored', async () => {
-    const { send } = await zaakWithDocument();
-
-    const response = await send('geefZaakdocumentLezen_Lv01', 'BeantwoordVraag?documentType=native', geefZaakdocumentLezen('DOC-1'));
-
-    expect(response.statusCode).toBe(200);
-    expect(readAnswer(response.body)!.content).toBe('first version');
   });
 });
 
